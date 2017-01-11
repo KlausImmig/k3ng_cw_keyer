@@ -1,15 +1,15 @@
 // This file is for the Open Interface http://remoteqth.com/open-interface.php
 
 // Initial and hardcoded settings
-#define initial_speed_wpm 26             // "factory default" keyer speed setting
-#define initial_sidetone_freq 600        // "factory default" sidetone frequency setting
+#define initial_speed_wpm 28             // "factory default" keyer speed setting
+#define initial_sidetone_freq 480        // "factory default" sidetone frequency setting
 #define hz_high_beep 1500                // frequency in hertz of high beep
 #define hz_low_beep 400                  // frequency in hertz of low beep
 #define initial_dah_to_dit_ratio 300     // 300 = 3 / normal 3:1 ratio
-#define initial_ptt_lead_time_tx1 0         // PTT lead time in mS
-#define initial_ptt_tail_time_tx1 10         // PTT tail time in mS
-#define initial_ptt_lead_time_tx2 0         // PTT lead time in mS
-#define initial_ptt_tail_time_tx2 10         // PTT tail time in mS
+#define initial_ptt_lead_time_tx1 10         // PTT lead time in mS
+#define initial_ptt_tail_time_tx1 200         // PTT tail time in mS
+#define initial_ptt_lead_time_tx2 10         // PTT lead time in mS
+#define initial_ptt_tail_time_tx2 200         // PTT tail time in mS
 #define initial_ptt_lead_time_tx3 0         // PTT lead time in mS
 #define initial_ptt_tail_time_tx3 10         // PTT tail time in mS
 #define initial_ptt_lead_time_tx4 0         // PTT lead time in mS
@@ -41,7 +41,7 @@
 #define winkey_xon_threshold 10          // the number of chars in the buffer below which we deactivate XOFF
 #define default_memory_repeat_time 3000  // time in milliseconds
 #define LCD_COLUMNS 16
-#define LCD_ROWS 2
+#define LCD_ROWS 1
 #define hell_pixel_microseconds 4025
 #define program_memory_limit_consec_spaces 1
 #define serial_leading_zeros 1            // set to 1 to activate leading zeros in serial numbers (i.e. #1 = 001)
@@ -51,7 +51,7 @@
 #define cw_echo_timing_factor 0.25
 #define potentiometer_always_on 0
 #define ptt_interlock_check_every_ms 100
-#define ptt_interlock_active_state HIGH
+#define ptt_interlock_active_state LOW
 #define unknown_cw_character '*'
 #define cli_paddle_echo_on_at_boot 1
 #define cli_straight_key_echo_on_at_boot 1

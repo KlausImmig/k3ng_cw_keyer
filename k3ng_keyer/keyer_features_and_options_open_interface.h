@@ -10,7 +10,7 @@
 #define FEATURE_WINKEY_EMULATION    // disabling Automatic Software Reset is highly recommended (see documentation)
 //#define FEATURE_BEACON
 #define FEATURE_CALLSIGN_RECEIVE_PRACTICE
-#define FEATURE_POTENTIOMETER         // do not enable unless you have a potentiometer connected, otherwise noise will falsely trigger wpm changes
+//#define FEATURE_POTENTIOMETER         // do not enable unless you have a potentiometer connected, otherwise noise will falsely trigger wpm changes
 #define FEATURE_SERIAL_HELP
 //#define FEATURE_HELL
 //#define FEATURE_PS2_KEYBOARD        // Use a PS2 keyboard to send code - Change keyboard layout (non-US) in K3NG_PS2Keyboard.h.  Additional options below.
@@ -24,14 +24,14 @@
 //#define FEATURE_LCD_YDv1                // YourDuino I2C LCD display with old LCM 1602 V1 ic
 //#define FEATURE_CW_DECODER
 //#define FEATURE_SLEEP                   // go to sleep after x minutes to conserve battery power
-//#define FEATURE_ROTARY_ENCODER          // rotary encoder speed control
+#define FEATURE_ROTARY_ENCODER          // rotary encoder speed control
 #define FEATURE_CMOS_SUPER_KEYER_IAMBIC_B_TIMING
 //#define FEATURE_HI_PRECISION_LOOP_TIMING
 //#define FEATURE_USB_MOUSE                // Uncomment three lines in k3ng_keyer.ino (search for note_usb_uncomment_lines)
 //#define FEATURE_CAPACITIVE_PADDLE_PINS  // remove the bypass capacitors on the paddle_left and paddle_right lines when using capactive paddles
 //#define FEATURE_LED_RING                // Mayhew Labs Led Ring support
 #define FEATURE_ALPHABET_SEND_PRACTICE  // enables command mode S command - created by Ryan, KC2ZWM
-//#define FEATURE_PTT_INTERLOCK 
+#define FEATURE_PTT_INTERLOCK 
 //#define FEATURE_QLF
 //#define FEATURE_EEPROM_E24C1024
 //#define FEATURE_STRAIGHT_KEY

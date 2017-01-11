@@ -1,5 +1,12 @@
 /*
 
+<<<<<<< HEAD:open_interface_iii_k3ng_keyer/open_interface_iii_k3ng_keyer.ino
+ *** Modified for Open Interface III hardware by RemoteQTH.com 
+ *** Included code between line nr 1199-11563, 1599-3057 and 3106-3110.
+=======
+Modified for RemoteQTH.com Open Interface III.
+>>>>>>> 24dfd6d9f57084edb9b4a50d04f94da43ea93d32:k3ng_keyer/k3ng_keyer.ino
+
  K3NG Arduino CW Keyer
 
  Copyright 1340 BC, 2010, 2011, 2012, 2013, 2014, 2015, 2016 Anthony Good, K3NG
@@ -1192,6 +1199,419 @@ PRIMARY_SERIAL_CLS * debug_serial_port;
 unsigned long automatic_sending_interruption_time = 0;     
 
 
+
+/*---------------------------------------------------------------------------------------------------------
+
+  Open Interface III
+  ----------------------
+  https://remoteqth.com/open-interface.php
+  2017-01 by OK1HRA with RTTY code from JI3BNB
+  rev 3,141
+
+   ___               _        ___ _____ _  _
+  | _ \___ _ __  ___| |_ ___ / _ \_   _| || |  __ ___ _ __
+  |   / -_) '  \/ _ \  _/ -_) (_) || | | __ |_/ _/ _ \ '  \
+  |_|_\___|_|_|_\___/\__\___|\__\_\|_| |_||_(_)__\___/_|_|_|
+
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+  Modes:
+    |CWK - CW Keyer by K3NG
+        WinKey/CLI emulation
+        SOURCE: USB/Serial interface
+        INPUTS: Paddle Interlock Encoder Set/Mem_buttons
+        OUTPUTS: CW1/2 PTT1/2 
+    >CWD - CW Daemon
+        Keyng from PC
+        SOURCE: USB/Serial interface DTR/RTS
+        INPUTS: DTR(CW) RTS(PTT)
+        OUTPUTS: CW1 PTT1
+    |SSB - SSB
+        LSB USB AM FM
+        SOURCE: Mic-audio
+        INPUTS: FootSwitch RTS
+        OUTPUTS: PTT1
+    >FSK - PC FSK keying
+        RTTY keying from EXTFSK with sniffing and decode signal (lowercase) by JI3BNB / OK1HRA
+        SOURCE: USB/Serial interface, Memory0-2_button
+        INPUTS: DTR RTS
+        OUTPUTS: PTT1 FSK
+    |FSK generator by JI3BNB
+        generator from Serial ASCII
+        SOURCE: USB/Serial interface
+        INPUTS: ASCII, Memory0-2_button
+        OUTPUTS: PTT1 FSK
+    |DIG - Audio FSK
+        AFSK PSK and any modes modulate fom audio
+        SOURCE: USB souncard
+        INPUTS: RTS(PTT)
+        OUTPUTS: PTT
+  - FSK TX code
+  - FSK memory
+  - FSK sniffing
+  - CW K3NG code
+  - Band decoder BCD output
+  - input voltage out of range warning
+
+Dhcp.h change from
+  int beginWithDHCP(uint8_t *, unsigned long timeout = 60000, unsigned long responseTimeout = 5000);  
+to
+  int beginWithDHCP(uint8_t *, unsigned long timeout = 6000, unsigned long responseTimeout = 5000);  
+
+TODO:
+- detect ethernet module
+- Sequencer
+- move configuration to SD card
+- use interrupt for
+    - interlock
+    - PTT232
+    - Foot PTT
+- save last MODE to eeprom?
+- two fsk mem from elbug
+- ssb ptt from elbug
+
+rev 141
+Serial0 - CLI serial2fsk in keyer_settings_open_interface.h
+Serial1 - ENCODER / FootSW 
+Serial2 - CAT
+Serial3 - ACC (CAT OUT)
+oi3a
+---------------------------------------------------------------------------------------------------------*/
+
+// FEATURES AND OPTIONS
+#define K3NG_KEYER               // enable CW keyer
+#define BAND_DECODER             // enable Band decoder
+#define FSK_TX                   // enable RTTY keying
+#define FSK_RX                   // enable RTTY decoder
+
+#define YOUR_CALL "OK1HRA"
+#define MODE_AFTER_POWER_UP 4        // MODE after start up
+#define MENU_AFTER_POWER_UP 7        // MENU after start up
+#define PCB_REV_3_141                // revision of PCB
+#define BUTTON_BEEP                  // Mode button beep enable
+#define CW_TONE 480                  // disable = off, DTR/RTS PC keying
+#define VOLTAGE_MEASURE_ADJUST 0.3   // ofset for precise adjust voltage measure
+
+// BAND DECODER Inputs
+ #define SERBAUD2     9600     // [baud] CAT Serial port in/out baudrate
+ #define ICOM_CIV              // read frequency from CIV (icom_civ.h) ** you must enabled 'CI-V transceive' in TRX settings **
+// #define KENWOOD_PC              // RS232 CAT (kenwood_pc.h)
+// #define YAESU_CAT             // RS232 CAT (yaesu_cat.h) YAESU CAT since 2015 ascii format
+// #define YAESU_CAT_OLD         // Old binary format RS232 CAT (yaesu_cat_old.h) <------- ** tested on FT-817 **
+// #define INPUT_SERIAL          // telnet ascii input - cvs format [band],[freq]\n (serial.h)
+// #define YAESU_BCD             // TTL BCD in A  (yaesu_bcd.h)
+// #define ICOM_ACC              // voltage 0-8V on pin? ACC connector - need calibrate
+
+// BAND DECODER Outputs
+ #define SERBAUD3     115200     // [baud] CAT Serial port in/out baudrate
+ #define BCD_OUT                 // output 11-14 relay used as Yaesu BCD 
+// #define ICOM_CIV_OUT          // send frequency to CIV ** you must set TRX CIV_ADRESS, and disable ICOM_CIV **
+// #define KENWOOD_PC_OUT        // send frequency to RS232 CAT ** for operation must disable REQUEST **
+// #define YAESU_CAT_OUT         // send frequency to RS232 CAT ** for operation must disable REQUEST **
+// #define REMOTE_RELAY          // TCP/IP remote relay - need install and configure TCP232 module
+// #define SERIAL_echo           // Feedback on serial line in same baudrate, CVS format <[band],[freq]>\n
+
+// BAND DECODER Settings
+ #define WATCHDOG                // determines the time, after which the BCD output switch to OFF and Frequency to 0 - uncomment for the enabled <------------------- nefunguje v request modu
+ #define REQUEST                 // use TXD output for sending frequency request, if not detect frequency in sniff mode (Kenwood PC, Yaesu CAT, Yaesu CAT old, Icom CIV)
+ #define CIV_ADRESS   0x56       // CIV input HEX Icom adress (0x is prefix)
+// #define CIV_ADR_OUT  0x56     // CIV output HEX Icom adress (0x is prefix)
+
+char* ANTname[17] = {            // Name antennas on LCD
+    "-",
+    "Dipole",     // Band 1
+    "Vertical",   // Band 2
+    "Yagi",       // Band 3
+    "Windom",     // Band 4
+    "DeltaLoop",  // Band 5
+    "20m Stack",  // Band 6
+    "-",  // Band 7
+    "-",  // Band 8
+    "-",  // Band 9
+    "-",  // Band 10
+    "-",  // Band 11
+    "-",  // Band 12
+    "-",  // Band 13
+    "-",  // Band 14
+    "-",  // Band 15
+    "-"  // Band 16
+};
+
+// Serial2FSK (FSK TX)
+#define SERBAUD0  115200         // Serial0 in/out baudrate (seria2fsk, )
+#define AFSK_ENABLE              // AFSK AUDIO (serial2fsk, fsk memory)
+//#define SERIAL_FSK_TX_ECHO     // enable TX echo on serial port
+//#define SHOW_HIDDEN_FSK_CHAR   // show invisible TX characters on LCD
+#define PTTlead  400             // FSK PTT lead delay ms
+#define PTTtail  200             // FSK PTT tail delay ms
+#define MARK     1445            // AFSK mark 1445 / 2295 Hz
+#define SPACE    1275            // AFSK space 1275 / 2125 Hz
+#define FMARK    HIGH            // FSK mark level [LOW/HIGH]
+#define FSPACE   LOW             // FSK space level [LOW/HIGH]
+#define BaudRate 45.45           // RTTY baud rate
+#define StopBit  1.5             // stop bit long
+String FSKmemory[3]= {
+  "cq de ok1hra ok1hra k",       // Memory 0 button
+  " ok1hra ",                    // Memory 1 button
+  " 599 15 "                     // Memory 2 button
+};
+
+// TIMEOUTS
+long Timeout[8][2] = { // [lines][rows]
+    {0, 500},          // LCD   [0][0-timer/1-timeout(LCDrefresh)]
+    {0, 3000},         // Menu to Mode timeout
+    {0, 1000},         // Band decoder read (Icom voltage, Yaesu BCD)  [2][0-timer/1-timeout(input refresh)]
+    {0, 10000},        // Band decoder WATCHDOG [3][0-timer/1-timeout]
+    {0, 2000},         // Band decoder REQUEST [4][0-timer/1-timeout]
+    {0, 50},           // MODE button debounce [5][0-timer/1-debounce]
+    {0, 500},          // MODE button long [6][0-timer/1-long]
+    {0, 1000},         // DCin voltage measure [7][0-timer/1-long]
+};
+
+//---------------------------------------------------------------------------------------------------------
+
+// PIN SETTINGS
+#if defined(PCB_REV_3_1415) // LCD A2, 37, 6, 7, 8, 9 (RS, E, D4, D5, D6, D7)
+  const int DCIN = A7;      // measure input voltage
+  const int DC3V = A6;      // measure 3,3V
+  const int encA = 24;      // encoder-A
+  const int encB = 18;      // encoder-B
+  const int MEM = A1;       // K3NG CW key button
+  const int CW1 = 34;       // out
+  const int CW2 = 35;       // 
+  const int PTT1 = 41;      // 
+  const int PTT2 = 22;      // 
+  const int PTT3 = 25;      // PTT mic
+  const int MENU = 36;      // MODE button
+  const int FSK = 23;       // FSK output
+  const int INTERLOCK = 2;  // in
+  const int FootSW = 19;    // in
+  const byte BCD1 = 42;     // __
+  const byte BCD2 = 43;     //   |
+  const byte BCD3 = 44;     //   |- band data
+  const byte BCD4 = 45;     // __|  from band decoder
+  const int PADDLEL = 26;    // in
+  const int PADDLER = 28;    // in
+  const int SEQUENCER = 40; // out
+  const int PTTPA = 31;     // out PA PTT
+  const int SDPLUG = A5;    // in  microSD detect
+  const int SDCS = 53;      // out
+  const int AFSK = 29;      // out Switch TX audio path
+  const int PTT232 = 3;     // in  PTT from USB/serial interface
+  const int FSKDET = 33;    // in  FSK detector from USB/serial interface
+  const int WINKEY = 27;    // out disable DTR/RTS from from USB/serial interface during run winkey emulator
+  const int TONE = 4;       // out
+  const int ACC4 = 47;
+  const int ACC5 = 13;
+  const int ACC6 = 5;
+  const int ACC7 = 30;
+  const int ACC8 = 32;
+  const int ACC9 = 11;
+  const int ACC10 = 12;
+  const int ACC11 = 38;
+  const int ACC12 = A3;
+  const int ACC13 = A4;
+  const int ACC14 = A8;
+  const int ACC17 = A9;
+  const int ACC19 = A11;    // if define Icom ACC voltage input
+  const int SelfRES = 39;
+  const int ETHINST = 46;     // in Ethernet module install detect
+#endif
+
+#if defined(PCB_REV_3_141)
+  const int DCIN = A7;      // measure input voltage
+  const int DC3V = A6;      // measure 3,3V
+  const int encA = 24;      // encoder-A
+  const int encB = 23;      // encoder-B
+  const int MEM = A1;       // K3NG CW key button
+  const int CW1 = 11;       // out
+  const int CW2 = 12;       // 
+  const int PTT1 = 13;      // 
+  const int PTT2 = 22;      // 
+  const int PTT3 = 25;      // PTT mic
+  const int MENU = 36;      // MODE button
+  const int FSK = 41;       // FSK output
+  const int INTERLOCK = 21; // in
+  const int FootSW = 20;    // in
+  const byte BCD1 = 42;     // __
+  const byte BCD2 = 43;     //   |
+  const byte BCD3 = 44;     //   |- band data
+  const byte BCD4 = 45;     // __|  from band decoder
+  const int PADDLEL = 2;    // in
+  const int PADDLER = 5;    // in
+  const int SEQUENCER = 40; // out
+  const int PTTPA = 31;     // out PA PTT
+  const int SDPLUG = A5;    // in  microSD detect
+  const int SDCS = 53;      // out
+  const int AFSK = 29;      // out Switch TX audio path
+  const int PTT232 = 37;    // in  PTT from USB/serial interface
+  const int FSKDET = 33;    // in  FSK detector from USB/serial interface
+  const int WINKEY = 27;    // out disable DTR/RTS from from USB/serial interface during run winkey emulator
+  const int TONE = 4;       // out
+  const int ACC4 = 47;
+  const int ACC5 = 13;
+  const int ACC6 = 5;
+  const int ACC7 = 30;
+  const int ACC8 = 32;
+  const int ACC9 = 11;
+  const int ACC10 = 12;
+  const int ACC11 = 38;
+  const int ACC12 = A2;
+  const int ACC13 = A3;
+  const int ACC14 = A8;
+  const int ACC17 = A9;
+  const int ACC19 = A11;    // if define Icom ACC voltage input
+#endif
+
+// SETTINGS
+#include <math.h>
+float DCinVoltage;
+int i = 0;
+int tmp = 0;
+int Loop[3] = {MODE_AFTER_POWER_UP, MENU_AFTER_POWER_UP, MENU_AFTER_POWER_UP};     //  Mode, Menu, previous Menu
+byte EncPrev=1;
+byte microSD[8] = {0b00000, 0b01111, 0b01001, 0b11111, 0b01111, 0b11111, 0b11111, 0b00000};
+byte Eth[8] = {0b00000, 0b00000, 0b11111, 0b10001, 0b10001, 0b11011, 0b11111, 0b00000};
+char* modeLCD[6][2]= {
+    {"|CWK", "CW keyer  "},
+    {">CWD", "PC DTR/RTS"},
+    {"|SSB", "LSB/USB/FM"},
+    {">FSK", "PC DTR/RTS"},
+    {"|FSK", "Ser. ASCII"},
+    {"|DIG", "Data  AFSK"},
+};
+
+char* MenuTree[14]= { // [radky][sloupce]
+  YOUR_CALL,         //  0 call
+  "PCB 3.141",       //  1
+  "DCin",            //  2
+  "3V3",             //  3
+  "CAT",             //  4
+  "BAUD",            //  5
+  "CIV",             //  6
+  "Freq",            //  7
+  "BAND",            //  8
+  "ANT",             //  9
+  "FSKBd",          // 10
+  "FSKlead",         // 11
+  "FSKtail",         // 12
+  "",                // 13  MODE fullname
+};
+#define MenuTreeSize (sizeof(MenuTree)/sizeof(char *)) //array size  
+int CulumnPositionEnd;
+
+byte StatusArray[4] = {
+  HIGH,   // MODE lastbuttonstate
+  HIGH,   // MODE debounced signal
+  LOW,    // LOW-MODE | HIGH MENU
+  LOW,    // PTT232 enable
+};
+
+// FSK RX
+#include <FlexiTimer2.h>
+boolean  dsp;
+byte     ti;
+uint8_t  baudot;
+static boolean fig;
+static byte    x;
+static byte    y;
+static char    chIn;
+static char    c[21];
+
+// FSK TX
+#include <stdio.h>
+int     OneBit = 1/BaudRate*1000;
+boolean d1;
+boolean d2;
+boolean d3;
+boolean d4;
+boolean d5;
+boolean space;
+boolean fig1;
+int     fig2;
+char    ch;
+int     r2;
+int     positionCounter = 0;  // LCD
+byte LFi[8] = {0b10111,0b10111,0b10001,0b11111,0b10001,0b10111,0b10011,0b10111};
+byte CRi[8] = {0b11001,0b10111,0b10111,0b11001,0b11111,0b10001,0b10111,0b10111};
+byte UPi[8] = {0b11111,0b11111,0b11011,0b10001,0b00100,0b01110,0b11111,0b11111};
+byte DWNi[8] = {0b11111,0b11111,0b01110,0b00100,0b10001,0b11011,0b11111,0b11111};
+
+// BAND DECODER
+int BAND;
+int BANDs;
+long freq = 0;
+#if defined(ICOM_ACC)
+    const int AD = ACC19;
+    int VALUE = 0;
+    int prevVALUE=0;
+    float VOLTAGE = 0;
+    int band = 0;
+    int counter = 0;
+#endif
+#if defined(YAESU_BCD)
+    boolean YBCD1;
+    boolean YBCD2;
+    boolean YBCD3;
+    boolean YBCD4;
+    int bandBCD;
+#endif
+#if defined(KENWOOD_PC) || defined(YAESU_CAT)
+    int lf = 59;  // 59 = ;
+#endif
+#if defined(KENWOOD_PC)
+    char rdK[37];   //read data kenwood
+    String rdKS;    //read data kenwood string
+#endif
+#if defined(YAESU_CAT)
+    char rdY[37];   //read data yaesu
+    String rdYS;    //read data yaesu string
+#endif
+#if defined(YAESU_CAT_OLD)
+    byte rdYO[37];   //read data yaesu
+    String rdYOS;    //read data yaesu string
+#endif
+#if defined(ICOM_CIV) || defined(ICOM_CIV_OUT)
+    int fromAdress = 14;              // 0E
+    byte rdI[10];   //read data icom
+    String rdIS;    //read data icom string
+    long freqPrev1;
+    byte incomingByte = 0;
+    int stateMachine = 1;  // state machine
+#endif
+#if defined(KENWOOD_PC_OUT) || defined(YAESU_CAT_OUT)
+    long freqPrev2;
+#endif
+#if defined(BCD_OUT)
+    char BCDout;
+    boolean BCDmatrixOUT[4][11] = { /*
+    --------------------------------------------------------------------
+    Band # to output relay   0   1   2   3   4   5   6   7   8   9  10
+    (Yaesu BCD)                 160 80  40  30  20  17  15  12  10  6m
+    --------------------------------------------------------------------
+                             |   |   |   |   |   |   |   |   |   |   |
+                             V   V   V   V   V   V   V   V   V   V   V
+                        */ { 0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0 }, /* --> BCD1
+                        */ { 0,  0,  1,  1,  0,  0,  1,  1,  0,  0,  1 }, /* --> BCD2
+                        */ { 0,  0,  0,  0,  1,  1,  1,  1,  0,  0,  0 }, /* --> BCD3
+                        */ { 0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1 }, /* --> BCD4
+    */};
+#endif
+
+// Open Interface III variables END
+
 /*---------------------------------------------------------------------------------------------------------
 
 
@@ -1224,13 +1644,1469 @@ void setup()
   initialize_web_server();
   initialize_debug_startup();
 
+
+
+//---------------------------------------------------------------------------------------------------------
+
+  // Open Interface III SETUP
+  // Menu
+  pinMode(DCIN, INPUT);
+  pinMode(DC3V, INPUT);
+  pinMode(encA, INPUT);
+    digitalWrite (encA, HIGH);            // pull up
+  pinMode(encB, INPUT);
+    digitalWrite (encB, HIGH);            // pull up
+  pinMode(MEM, INPUT);
+  pinMode(MENU, INPUT);
+  pinMode(INTERLOCK, INPUT);
+  pinMode(FootSW, INPUT);
+  pinMode(PADDLEL, INPUT);
+  pinMode(PADDLER, INPUT);
+  #if defined(YAESU_BCD)
+   pinMode(BCD1, INPUT);
+   pinMode(BCD2, INPUT);
+   pinMode(BCD3, INPUT);
+   pinMode(BCD4, INPUT);
+  #else
+   pinMode(BCD1, OUTPUT);
+   pinMode(BCD2, OUTPUT);
+   pinMode(BCD3, OUTPUT);
+   pinMode(BCD4, OUTPUT);
+  #endif
+  pinMode(SDPLUG, INPUT);
+    digitalWrite (SDPLUG, HIGH);            // pull up
+  pinMode(PTT232, INPUT);
+  pinMode(FSKDET, INPUT);
+
+  pinMode(CW1, OUTPUT);
+  pinMode(CW2, OUTPUT);
+  pinMode(PTT1, OUTPUT);
+  pinMode(PTT2, OUTPUT);
+  pinMode(PTT3, OUTPUT);
+  pinMode(FSK, OUTPUT);
+  pinMode(SEQUENCER, OUTPUT);
+  pinMode(PTTPA, OUTPUT);
+  pinMode(SDCS, OUTPUT);
+  pinMode(AFSK, OUTPUT);
+  pinMode(WINKEY, OUTPUT);
+    digitalWrite (WINKEY, HIGH);
+  pinMode(TONE, OUTPUT);
+  // FSK TX
+  digitalWrite(FSK, LOW);
+  lcd.createChar(0, CRi);
+  lcd.createChar(1, LFi);
+  lcd.createChar(2, UPi);
+  lcd.createChar(3, DWNi);
+  // FSK RX
+  FlexiTimer2::set(1, timer_interrupt);
+  FlexiTimer2::start();
+  // BAND DECODER
+//  #if defined(INPUT_SERIAL) || defined(SERIAL_echo) || defined(KENWOOD_PC) || defined(ICOM_CIV) || defined(YAESU_CAT) || defined(REMOTE_RELAY)
+      Serial2.begin(SERBAUD2);
+      Serial2.setTimeout(10);
+//  #endif
+  #if defined(YAESU_CAT_OLD)
+      Serial2.begin(SERBAUD2, SERIAL_8N2);
+      Serial2.setTimeout(10);
+  #endif
+  #if defined(KENWOOD_PC) || defined(YAESU_CAT)
+      //CATdata.reserve(200);          // reserve bytes for the CATdata
+  #endif
+
+  // other
+  lcd.createChar(4, microSD);
+  lcd.createChar(5, Eth);
+  lcd.begin(16, 2);
+  lcd.setCursor(2, 1);
+//            lcd.print((char)188);
+//            lcd.print((char)199);
+//            lcd.print((char)246);
+//            lcd.print(" 14.023,22");
+  
+  // CWK - loop1 preset
+  digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
+  digitalWrite (AFSK, LOW);
+
+} // SETUP END
+
+//-------------------------------------------------------------------------------------------------------
+
+void loop() {
+    #if defined(BAND_DECODER)
+      BandDecoder();
+    #endif
+    DCinMeasure();
+    OpenInterfaceLCD();   // second line print
+    OpenInterfaceMENU();  // Menu button and HW preset
+    OpenInterfaceMODE();  // MODE in->out and features 
+
+}    // end loop
+
+
+// SUBROUTINES ---------------------------------------------------------------------------------------------------------
+
+void DCinMeasure(){
+  if (millis() - Timeout[7][0] > (Timeout[7][1])){
+    DCinVoltage = volt(analogRead(DCIN), 11, VOLTAGE_MEASURE_ADJUST);
+    if (DCinVoltage<8){
+      lcd.setCursor(3, 0);
+      lcd.print("Power LOW!");        
+      Loop[1]= 2;
+    }else if (DCinVoltage>18){
+      lcd.setCursor(2, 0);
+      lcd.print("Power HIGH!");        
+      Loop[1]= 2;
+    }
+    Timeout[7][0] = millis();                      // set time mark
+  }
+
 }
 
-// --------------------------------------------------------------------------------------------
+void OpenInterfaceLCD(){    // LCD
+    if (millis() - Timeout[0][0] > (Timeout[0][1])){
+      // micro SD
+      lcd.setCursor(15, 1);
+      if(analogRead(SDPLUG)<128){
+        lcd.write(byte(4));               // microSD
+      } else {
+        lcd.print(" ");        
+      }
+      
+      // MENU
+      lcd.setCursor(0, 1);
+      MenuToLCD(Loop[1]);
+      Timeout[0][0] = millis();                      // set time mark
 
-void loop()
-{
+      // MODE
+        lcd.setCursor(11, 1);
+      if(StatusArray[2] == LOW){        // Mode
+        lcd.print(modeLCD[Loop[0]][0]);
+      }else{                            // Menu
+        lcd.print(" <");
+
+//        if(digitalRead(ETHINST)==LOW){
+//          lcd.setCursor(0, 1);
+//          lcd.write(byte(5));               // ETH
+//        }else{
+//          lcd.setCursor(12, 1);
+//        }
+        if(Loop[1]<10){
+          lcd.print("0");
+        }
+        lcd.print(Loop[1]);
+      }
+
+    }
+}
+
+void MenuToLCD(int nr){
+  String Note = MenuTree[nr];
+  Note.remove(11);                // fixed lenth to 11 char
+    Note += " ";
+  lcd.print(Note);
+  int CulumnPosition = Note.length();
   
+  switch (nr) {
+    case 2:{ // DC in
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(DCinVoltage);
+      lcd.print("V");
+      CulumnPosition=CulumnPosition+6;
+    break;
+    }
+    case 3:{ // DC 3V3
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(volt(analogRead(DC3V), 1, 0));
+      lcd.print("V");
+      CulumnPosition=CulumnPosition+5;
+    break;
+    }
+    case 4:{ // Band Decoder
+      lcd.setCursor(CulumnPosition, 1);
+      #if defined(ICOM_CIV)
+        lcd.print("ICOM");
+        CulumnPosition=CulumnPosition+4;
+      #endif
+      #if defined(KENWOOD_PC)
+        lcd.print("KENWOOD");
+        CulumnPosition=CulumnPosition+7;
+      #endif
+      #if defined(YAESU_CAT)
+        lcd.print("YAESU2");
+        CulumnPosition=CulumnPosition+6;
+      #endif
+      #if defined(YAESU_CAT_OLD)
+        lcd.print("YAESU1");
+        CulumnPosition=CulumnPosition+6;
+      #endif
+      #if defined(INPUT_SERIAL)
+        lcd.print("Serial");
+        CulumnPosition=CulumnPosition+6;
+      #endif
+      #if defined(YAESU_BCD)
+        lcd.print("BCD");
+        CulumnPosition=CulumnPosition+3;
+      #endif
+      #if defined(ICOM_ACC)
+        lcd.print("V-IN");
+        CulumnPosition=CulumnPosition+4;
+      #endif
+    break;
+    }
+    case 5:{ // Baudrate
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(SERBAUD2);
+      CulumnPosition=CulumnPosition+String(SERBAUD2).length();
+    break;
+    }
+    case 6:{ // CI-V address
+      lcd.setCursor(CulumnPosition, 1);
+      #if defined(ICOM_CIV)
+        lcd.print(CIV_ADRESS, HEX);
+        lcd.print("h");
+        CulumnPosition=CulumnPosition+3;
+      #else
+        lcd.print("-");
+        CulumnPosition=CulumnPosition+1;
+      #endif  
+    break;
+    }
+    case 7:{ // freq
+      lcd.setCursor(CulumnPosition-1, 1);
+      int MHZ = freq/1000000;
+      if(MHZ<100 && MHZ>9){
+        lcd.print(" ");
+      }else if(MHZ<10){
+        lcd.print("  ");
+      }
+      lcd.print(MHZ);
+      lcd.print(".");
+      int KHZ = freq/1000-(MHZ*1000);
+      if(KHZ<100 && KHZ>9){
+        lcd.print("0");
+      }else if(KHZ<10){
+        lcd.print("00");
+      }
+      lcd.print(KHZ);
+//      lcd.print(".");
+//      int HZ = freq-(MHZ*1000000)-(KHZ*1000);
+//      HZ=HZ/10;
+//      if(HZ<10){
+//        lcd.print("0");
+//      }
+//      lcd.print(HZ);
+      CulumnPosition=CulumnPosition+7;
+    break;
+    }
+    case 8:{ // BAND
+      if(BAND<10){
+        lcd.setCursor(CulumnPosition, 1);
+      }else{
+        lcd.setCursor(CulumnPosition-1, 1);
+      }
+      lcd.print(BAND);
+      lcd.print(" ");
+      lcd.print(BCDmatrixOUT[0][BAND]);
+      lcd.print(BCDmatrixOUT[1][BAND]);
+      lcd.print(BCDmatrixOUT[2][BAND]);
+      lcd.print(BCDmatrixOUT[3][BAND]);
+      CulumnPosition=CulumnPosition+7;
+    break;
+    }
+    case 9:{ // ANT
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(ANTname[BAND]);
+      CulumnPosition=CulumnPosition+String(ANTname[BAND]).length();
+    break;
+    }
+    case 10:{ // FSK baudrate
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(BaudRate);
+      CulumnPosition=CulumnPosition+5;
+    break;
+    }
+    case 11:{ // FSK Lead
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(PTTlead);
+      CulumnPosition=CulumnPosition+String(PTTlead).length();
+    break;
+    }
+    case 12:{ // FSK tail
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(PTTtail);
+      CulumnPosition=CulumnPosition+String(PTTtail).length();
+    break;
+    }
+    case 13:{ // MODE
+      lcd.setCursor(CulumnPosition-1, 1);
+      lcd.print(modeLCD[Loop[0]][1]);
+      CulumnPosition=CulumnPosition+String(modeLCD[Loop[0]][1]).length()-1;
+    break;
+    }
+
+  }
+  if(StatusArray[2] == LOW){        // Mode
+    CulumnPositionEnd = 11;
+  }else{
+    CulumnPositionEnd = 12;
+  }
+  while (CulumnPosition < CulumnPositionEnd) {    // if short, apend spaces
+    lcd.print(" ");
+    CulumnPosition++;
+}
+
+}
+
+void OpenInterfaceMENUtimeout(){
+  if(Loop[2] != Loop[1]){
+    StatusArray[2] = HIGH;          // Menu
+    Loop[2] = Loop[1];
+    Timeout[1][0] = millis();                      // set time mark
+  }
+  if (millis() - Timeout[1][0] > (Timeout[1][1])){
+    StatusArray[2] = LOW;         // Mode
+  }  
+}
+
+void OpenInterfaceMENU(){
+      OpenInterfaceMENUtimeout();
+      if (digitalRead(MENU) != StatusArray[0]) {   // reading != lastbuttonstate
+          Timeout[5][0] = millis();                // reset debounce timer
+          StatusArray[0] = !StatusArray[0];
+      }
+      if ((millis() - Timeout[5][0]) > Timeout[5][1]) {      // over deobounce timer
+        if(digitalRead(MENU) == LOW && StatusArray[1] == HIGH){
+          Timeout[6][0] = millis();                          // reset true press timer
+          StatusArray[1] = LOW;                              // flip-flop
+        }        
+        if(digitalRead(MENU) == HIGH && StatusArray[1] == LOW){
+          StatusArray[1] = HIGH;                             // flip-flop
+          if((millis() - Timeout[6][0]) < Timeout[6][1]){    // short detect
+            if(StatusArray[2] == LOW){                       // if MENU disable, MODE active
+              Loop[0]++;
+              if(Loop[0]==6){
+                Loop[0]=0;
+              }
+              switch (Loop[0]) {
+                case 0:{ // CW Keyer
+                    digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
+                    digitalWrite (AFSK, LOW);
+                    break;
+                }
+                case 1:{ // CW PC
+                    digitalWrite (WINKEY, LOW);
+                    digitalWrite (AFSK, LOW);
+                    break;
+                }
+                case 2:{ // SSB
+                    digitalWrite (WINKEY, LOW);
+                    digitalWrite (AFSK, LOW);      
+                    break;
+                }
+                case 3:{ // FSK PC
+                    digitalWrite (WINKEY, LOW);
+                    digitalWrite (AFSK, LOW);
+                    break;
+                }
+                case 4:{ // FSK ASCII
+                    Serial.begin(SERBAUD0);
+                    digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
+                    digitalWrite (AFSK, LOW);
+                    Serial.flush();  // clear buffer before switch to serial2FSK
+                    break;
+                }
+                case 5:{ // DIGITAL (AFSK)
+                    Serial.begin(PRIMARY_SERIAL_PORT_BAUD);
+                    digitalWrite (WINKEY, LOW);
+                    digitalWrite (AFSK, HIGH);
+                    break;
+                }           
+              }  // endswitch
+            }else{ // menu enable
+              Loop[1]++;
+              if(Loop[1] > MenuTreeSize-1){
+                Loop[1]=0;
+              }
+            }
+            TON(1);
+          }else{                                            // Long detect
+            StatusArray[2] = !StatusArray[2];               // MENU status
+            if(StatusArray[2] == HIGH){                     // if Menu
+              Timeout[1][0] = millis();                      // set time mark
+            }
+            TON(0);
+          }
+        }
+      }
+}
+
+void OpenInterfaceMODE(){
+  // MODE
+  switch (Loop[0]) {
+    case 0:{ // CW Keyer
+      #if defined(K3NG_KEYER)
+        K3NG_key();
+      #endif
+    break;
+    }
+    case 1:{ // CW PC
+      if(digitalRead(PTT232)==HIGH){   // PTT-232
+        digitalWrite (PTT1, HIGH);
+        StatusArray[3] = HIGH;
+      }else{
+        if(StatusArray[3] == HIGH){       // only if activate from PTT232
+          digitalWrite (PTT1, LOW);
+          StatusArray[3] = LOW;
+        }
+      }
+      #if defined(K3NG_KEYER)
+        K3NG_key();
+      #endif
+    break;
+    }
+    case 2:{ // SSB
+      if(digitalRead(FootSW)==LOW || digitalRead(PTT232)==HIGH){   // FootSW / 232(usb audio-ssb pc memory) PTT
+        digitalWrite (PTT3, HIGH);      
+      }else{
+        digitalWrite (PTT3, LOW);
+      }
+      MenuEncoder();
+    break;
+    }
+    case 3:{ // FSK PC
+      #if defined(FSK_RX)
+        fskDecoder();
+      #endif
+      #if defined(FSK_TX)
+        ButtonFSK();
+      #endif
+      if(digitalRead(PTT232)==HIGH){   // PTT232
+        digitalWrite (PTT1, HIGH);
+      }else{
+        digitalWrite (PTT1, LOW);
+      }
+      MenuEncoder();
+    break;
+    }
+    case 4:{ // FSK
+      #if defined(FSK_TX)
+        ButtonFSK();
+        Serial2FSK();
+      #endif
+      MenuEncoder();
+    break;
+    }
+    case 5:{ // DIGITAL (AFSK)
+      if(digitalRead(PTT232)==HIGH){   // PTT-232
+        digitalWrite (PTT1, HIGH);
+      }else{
+        digitalWrite (PTT1, LOW);
+      }
+      Button1(PTT1);  //for testing
+      MenuEncoder();
+    break;
+    }  
+  }  // endswitch 
+}
+
+void Button1(int OUT){
+  tmp = analogRead(MEM);
+  if(tmp > 45 && tmp < 130){
+    digitalWrite (OUT, HIGH);
+  }else{
+    digitalWrite (OUT, LOW);
+  }
+}
+void Button2_tone(int OUT2){
+  tmp = analogRead(MEM);
+  if(tmp > 130 && tmp < 210){
+    digitalWrite (OUT2, HIGH);
+    #if defined(CW_TONE)
+      tone(TONE, CW_TONE);
+    #endif
+  }else{
+    digitalWrite (OUT2, LOW);
+    #if defined(CW_TONE)
+      if(digitalRead(FSKDET)==HIGH){  // if H run tone from FSKDET
+        noTone(TONE);
+      }
+    #endif
+  }
+  #if defined(CW_TONE)            // CW TONE
+    if(digitalRead(FSKDET)==LOW){
+        tone(TONE, CW_TONE);
+    }else{
+      if(tmp < 130 || tmp > 210){  // if button 2 ON run tone from button
+        noTone(TONE);
+      }
+    }
+  #endif
+}
+
+// TONE
+int TON(int ToneType){
+  #if defined(BUTTON_BEEP)
+    switch (ToneType) {
+      case 0: tone(TONE, 200, 200); break;
+      case 1: tone(TONE, 400, 50); break;
+    }
+  #endif
+}
+
+// ENCODER
+void MenuEncoder(){
+  if(digitalRead(encB) == LOW && EncPrev == 1){
+    if(digitalRead(encA) == LOW){
+      Loop[1]++;
+        if(Loop[1] > MenuTreeSize-1){
+          Loop[1]=0;
+        }
+    }else{
+      Loop[1]--;
+        if(Loop[1] < 0){
+          Loop[1]=MenuTreeSize-1;
+        }
+    }
+    EncPrev=0;
+  }else  if(digitalRead(encB) == HIGH && EncPrev == 0){
+    EncPrev=1;
+  }
+}
+
+// VOLT
+float volt(int raw, float K, float DELTA) {
+  float voltage = (raw * 5.0) / 1024.0 * K + DELTA;    // resistor coeficient 
+  return voltage;
+}
+
+void ButtonFSK(){
+  tmp = analogRead(MEM);
+  if(tmp < 5){
+    FSKmemoryTX(0);
+  }else if(tmp > 45 && tmp < 130){
+    FSKmemoryTX(1);
+  }else if(tmp > 130 && tmp < 210){
+    FSKmemoryTX(2);
+  }
+}
+
+//-------------------------------------------------------------------------------------------------------
+
+// MEMORY TO FSK TX
+void FSKmemoryTX(int memory){
+  fig1 = 1;                         // every shift to start message 
+  lcd.setCursor(positionCounter+1, 0);
+  #if defined(AFSK_ENABLE)
+  tone(TONE, MARK);
+  #endif 
+  digitalWrite(PTT1, HIGH);          // PTT ON
+  delay(PTTlead);                   // PTT lead delay
+  tmp = FSKmemory[memory].length();
+  for (i = 0; i < tmp; i++) {
+    positionCounter++;
+    if (positionCounter > 15){
+        lcd.setCursor(0, 0);
+        lcd.print("                ");
+        lcd.setCursor(0, 0);
+        positionCounter=0;
+    }
+    ch = toUpperCase(FSKmemory[memory].charAt(i));
+    chTable();
+
+    if(fig1 == 0 && fig2 == 1){
+            d1 = 1; d2 = 1; d3 = 0; d4 = 1; d5 = 1; //FIGURES
+            #if defined(SHOW_HIDDEN_FSK_CHAR)
+              lcd.write(byte(2));                     // UP LCD char
+            #endif 
+            sendFsk();
+    }else if(fig1 == 1 && fig2 == 0){
+            d1 = 1; d2 = 1; d3 = 1; d4 = 1; d5 = 1; //LETTERS
+            #if defined(SHOW_HIDDEN_FSK_CHAR)
+              lcd.write(byte(3));                     // DWN LCD char
+            #endif 
+            sendFsk();
+    }else if(space == 1 && fig2 == 1){
+            d1 = 1; d2 = 1; d3 = 0; d4 = 1; d5 = 1; //FIGURES 
+            #if defined(SHOW_HIDDEN_FSK_CHAR)
+              lcd.write(byte(2));                     // UP LCD char
+            #endif 
+            sendFsk();
+    }
+    
+    if(fig2 == 0 || fig2 == 1){
+            space = 0;
+            fig1 = fig2;
+    }
+    
+    if (ch == '\r'){              // CR LCD char
+            #if defined(SHOW_HIDDEN_FSK_CHAR)
+              lcd.write(byte(0));
+            #endif 
+    }else if(ch == '\n'){         // LF LCD char
+            #if defined(SHOW_HIDDEN_FSK_CHAR)
+              lcd.write(byte(1));
+            #endif 
+    }else{
+              lcd.print(ch);
+    }
+    chTable();
+    sendFsk();
+    delay(5);
+  }
+  delay(PTTtail);
+  digitalWrite(PTT1, LOW);
+  #if defined(SERIAL_FSK_TX_ECHO)
+      Serial.println();
+  #endif
+  digitalWrite(FSK, LOW);
+  #if defined(AFSK_ENABLE)
+    noTone(TONE);
+  #endif
+}
+
+// SERIAL TO FSK TX
+void Serial2FSK(){
+    if (Serial.available()) {
+        fig1 = 1;                         // every shift to start message 
+        lcd.setCursor(positionCounter, 0);
+        #if defined(AFSK_ENABLE)
+          tone(TONE, MARK);
+        #endif 
+        digitalWrite(PTT1, HIGH);          // PTT ON
+        delay(PTTlead);                   // PTT lead delay
+        // ch = ' '; Serial.print(ch); chTable(); sendFsk();   // Space before sending
+        while (Serial.available()) {
+            positionCounter++;
+            if (positionCounter > 15){
+                lcd.setCursor(0, 0);
+                lcd.print("                ");
+                lcd.setCursor(0, 0);
+                positionCounter=0;
+            }
+            ch = toUpperCase(Serial.read());
+            chTable();
+    
+            if(fig1 == 0 && fig2 == 1){
+                    d1 = 1; d2 = 1; d3 = 0; d4 = 1; d5 = 1; //FIGURES
+                    #if defined(SHOW_HIDDEN_FSK_CHAR)
+                      lcd.write(byte(2));                     // UP LCD char
+                    #endif 
+                    sendFsk();
+            }else if(fig1 == 1 && fig2 == 0){
+                    d1 = 1; d2 = 1; d3 = 1; d4 = 1; d5 = 1; //LETTERS
+                    #if defined(SHOW_HIDDEN_FSK_CHAR)
+                      lcd.write(byte(3));                     // DWN LCD char
+                    #endif 
+                    sendFsk();
+            }else if(space == 1 && fig2 == 1){
+                    d1 = 1; d2 = 1; d3 = 0; d4 = 1; d5 = 1; //FIGURES 
+                    #if defined(SHOW_HIDDEN_FSK_CHAR)
+                      lcd.write(byte(2));                     // UP LCD char
+                    #endif 
+                    sendFsk();
+            }
+            
+            if(fig2 == 0 || fig2 == 1){
+                    space = 0;
+                    fig1 = fig2;
+            }
+            
+            if (ch == '\r'){              // CR LCD char
+                    #if defined(SHOW_HIDDEN_FSK_CHAR)
+                      lcd.write(byte(0));
+                    #endif 
+            }else if(ch == '\n'){         // LF LCD char
+                    #if defined(SHOW_HIDDEN_FSK_CHAR)
+                      lcd.write(byte(1));
+                    #endif 
+            }else{
+                      lcd.print(ch);
+            }
+            chTable();
+            sendFsk();
+            delay(5);
+        }
+        // ch = ' '; Serial.print(ch); chTable(); sendFsk();   // Space after sending
+        delay(PTTtail);
+        digitalWrite(PTT1, LOW);
+        #if defined(SERIAL_FSK_TX_ECHO)
+            Serial.println();
+        #endif
+        digitalWrite(FSK, LOW);
+        #if defined(AFSK_ENABLE)
+          noTone(TONE);
+        #endif
+      }
+
+}
+
+void sendFsk()
+{
+        #if defined(SERIAL_FSK_TX_ECHO)
+              Serial.print(d1);Serial.print(d2);Serial.print(d3);Serial.print(d4);Serial.print(d5);Serial.print(' '); // 5bit code serial echo
+              //Serial.print(OneBit);Serial.print('|');Serial.print(OneBit*StopBit);Serial.print(' ');                  // ms
+        #endif
+        //--start bit
+        digitalWrite(FSK, FSPACE);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, SPACE);
+          #endif
+        delay(OneBit);
+        //--bit1
+        if(d1 == 1){digitalWrite(FSK, FMARK);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, MARK);
+          #endif
+        }
+        else       {digitalWrite(FSK, FSPACE);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, SPACE);
+          #endif
+        } delay(OneBit);
+        //--bit2
+        if(d2 == 1){digitalWrite(FSK, FMARK);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, MARK);
+          #endif
+        }
+        else       {digitalWrite(FSK, FSPACE);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, SPACE);
+          #endif
+        } delay(OneBit);
+        //--bit3
+        if(d3 == 1){digitalWrite(FSK, FMARK);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, MARK);
+          #endif
+        }
+        else       {digitalWrite(FSK, FSPACE);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, SPACE);
+          #endif
+        } delay(OneBit);
+        //--bit4
+        if(d4 == 1){digitalWrite(FSK, FMARK);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, MARK);
+          #endif
+        }
+        else       {digitalWrite(FSK, FSPACE);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, SPACE);
+          #endif
+        } delay(OneBit);
+        //--bit5
+        if(d5 == 1){digitalWrite(FSK, FMARK);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, MARK);
+          #endif
+        }
+        else       {digitalWrite(FSK, FSPACE); 
+          #if defined(AFSK_ENABLE)
+            tone(TONE, SPACE);
+          #endif
+        } delay(OneBit);
+        //--stop bit
+        digitalWrite(FSK, FMARK);
+          #if defined(AFSK_ENABLE)
+            tone(TONE, MARK);
+          #endif
+        delay(OneBit*StopBit);
+}
+
+void chTable()
+{
+        fig2 = -1;
+        if(ch == ' ')
+        {
+                d1 = 0; d2 = 0; d3 = 1; d4 = 0; d5 = 0;
+                space = 1;
+        }
+        else if(ch == 'A'){d1 = 1; d2 = 1; d3 = 0; d4 = 0; d5 = 0; fig2 = 0;}
+        else if(ch == 'B'){d1 = 1; d2 = 0; d3 = 0; d4 = 1; d5 = 1; fig2 = 0;}
+        else if(ch == 'C'){d1 = 0; d2 = 1; d3 = 1; d4 = 1; d5 = 0; fig2 = 0;}
+        else if(ch == 'D'){d1 = 1; d2 = 0; d3 = 0; d4 = 1; d5 = 0; fig2 = 0;}
+        else if(ch == 'E'){d1 = 1; d2 = 0; d3 = 0; d4 = 0; d5 = 0; fig2 = 0;}
+        else if(ch == 'F'){d1 = 1; d2 = 0; d3 = 1; d4 = 1; d5 = 0; fig2 = 0;}
+        else if(ch == 'G'){d1 = 0; d2 = 1; d3 = 0; d4 = 1; d5 = 1; fig2 = 0;}
+        else if(ch == 'H'){d1 = 0; d2 = 0; d3 = 1; d4 = 0; d5 = 1; fig2 = 0;}
+        else if(ch == 'I'){d1 = 0; d2 = 1; d3 = 1; d4 = 0; d5 = 0; fig2 = 0;}
+        else if(ch == 'J'){d1 = 1; d2 = 1; d3 = 0; d4 = 1; d5 = 0; fig2 = 0;}
+        else if(ch == 'K'){d1 = 1; d2 = 1; d3 = 1; d4 = 1; d5 = 0; fig2 = 0;}
+        else if(ch == 'L'){d1 = 0; d2 = 1; d3 = 0; d4 = 0; d5 = 1; fig2 = 0;}
+        else if(ch == 'M'){d1 = 0; d2 = 0; d3 = 1; d4 = 1; d5 = 1; fig2 = 0;}
+        else if(ch == 'N'){d1 = 0; d2 = 0; d3 = 1; d4 = 1; d5 = 0; fig2 = 0;}
+        else if(ch == 'O'){d1 = 0; d2 = 0; d3 = 0; d4 = 1; d5 = 1; fig2 = 0;}
+        else if(ch == 'P'){d1 = 0; d2 = 1; d3 = 1; d4 = 0; d5 = 1; fig2 = 0;}
+        else if(ch == 'Q'){d1 = 1; d2 = 1; d3 = 1; d4 = 0; d5 = 1; fig2 = 0;}
+        else if(ch == 'R'){d1 = 0; d2 = 1; d3 = 0; d4 = 1; d5 = 0; fig2 = 0;}
+        else if(ch == 'S'){d1 = 1; d2 = 0; d3 = 1; d4 = 0; d5 = 0; fig2 = 0;}
+        else if(ch == 'T'){d1 = 0; d2 = 0; d3 = 0; d4 = 0; d5 = 1; fig2 = 0;}
+        else if(ch == 'U'){d1 = 1; d2 = 1; d3 = 1; d4 = 0; d5 = 0; fig2 = 0;}
+        else if(ch == 'V'){d1 = 0; d2 = 1; d3 = 1; d4 = 1; d5 = 1; fig2 = 0;}
+        else if(ch == 'W'){d1 = 1; d2 = 1; d3 = 0; d4 = 0; d5 = 1; fig2 = 0;}
+        else if(ch == 'X'){d1 = 1; d2 = 0; d3 = 1; d4 = 1; d5 = 1; fig2 = 0;}
+        else if(ch == 'Y'){d1 = 1; d2 = 0; d3 = 1; d4 = 0; d5 = 1; fig2 = 0;}
+        else if(ch == 'Z'){d1 = 1; d2 = 0; d3 = 0; d4 = 0; d5 = 1; fig2 = 0;}
+        else if(ch == '0'){d1 = 0; d2 = 1; d3 = 1; d4 = 0; d5 = 1; fig2 = 1;}
+        else if(ch == '1'){d1 = 1; d2 = 1; d3 = 1; d4 = 0; d5 = 1; fig2 = 1;}
+        else if(ch == '2'){d1 = 1; d2 = 1; d3 = 0; d4 = 0; d5 = 1; fig2 = 1;}
+        else if(ch == '3'){d1 = 1; d2 = 0; d3 = 0; d4 = 0; d5 = 0; fig2 = 1;}
+        else if(ch == '4'){d1 = 0; d2 = 1; d3 = 0; d4 = 1; d5 = 0; fig2 = 1;}
+        else if(ch == '5'){d1 = 0; d2 = 0; d3 = 0; d4 = 0; d5 = 1; fig2 = 1;}
+        else if(ch == '6'){d1 = 1; d2 = 0; d3 = 1; d4 = 0; d5 = 1; fig2 = 1;}
+        else if(ch == '7'){d1 = 1; d2 = 1; d3 = 1; d4 = 0; d5 = 0; fig2 = 1;}
+        else if(ch == '8'){d1 = 0; d2 = 1; d3 = 1; d4 = 0; d5 = 0; fig2 = 1;}
+        else if(ch == '9'){d1 = 0; d2 = 0; d3 = 0; d4 = 1; d5 = 1; fig2 = 1;}
+        else if(ch == '-'){d1 = 1; d2 = 1; d3 = 0; d4 = 0; d5 = 0; fig2 = 1;}
+        else if(ch == '?'){d1 = 1; d2 = 0; d3 = 0; d4 = 1; d5 = 1; fig2 = 1;}
+        else if(ch == ':'){d1 = 0; d2 = 1; d3 = 1; d4 = 1; d5 = 0; fig2 = 1;}
+        else if(ch == '('){d1 = 1; d2 = 1; d3 = 1; d4 = 1; d5 = 0; fig2 = 1;}
+        else if(ch == ')'){d1 = 0; d2 = 1; d3 = 0; d4 = 0; d5 = 1; fig2 = 1;}
+        else if(ch == '.'){d1 = 0; d2 = 0; d3 = 1; d4 = 1; d5 = 1; fig2 = 1;}
+        else if(ch == ','){d1 = 0; d2 = 0; d3 = 1; d4 = 1; d5 = 0; fig2 = 1;}
+        else if(ch == '/'){d1 = 1; d2 = 0; d3 = 1; d4 = 1; d5 = 1; fig2 = 1;}
+        else if(ch == '+'){d1 = 1; d2 = 0; d3 = 0; d4 = 0; d5 = 1; fig2 = 1;} //ITA2
+        else if(ch == '\n'){d1 = 0; d2 = 1; d3 = 0; d4 = 0; d5 = 0;} //LF
+        else if(ch == '\r'){d1 = 0; d2 = 0; d3 = 0; d4 = 1; d5 = 0;} //CR
+        else
+        {
+                ch = ' ';
+                d1 = 0; d2 = 0; d3 = 1; d4 = 0; d5 = 0;
+                space = 1;
+        }
+}
+
+// FSK DECODER by JI3BNB
+void timer_interrupt(void){
+        static byte rSq;        
+        ti++;
+        if(rSq == 0 && digitalRead(FSKDET) == 0){
+                rSq = 1;
+                ti = 0;
+        }
+        if(rSq == 1 && ti == 10){
+                if(digitalRead(FSKDET) == 0){
+                        rSq = 2;
+                        ti = 0;
+                }else{
+                        rSq = 0;
+                }
+        }
+        if(rSq == 2 && ti == 22){
+                bitWrite(baudot, 0, digitalRead(FSKDET));
+        }
+        if(rSq == 2 && ti == 44){
+                bitWrite(baudot, 1, digitalRead(FSKDET));
+        }
+        if(rSq == 2 && ti == 66){
+                bitWrite(baudot, 2, digitalRead(FSKDET));
+        }
+        if(rSq == 2 && ti == 88){
+                bitWrite(baudot, 3, digitalRead(FSKDET));
+        }
+        if(rSq == 2 && ti == 110){
+                bitWrite(baudot, 4, digitalRead(FSKDET));
+                dsp = 1;
+        }
+        if(rSq == 2 && ti == 135){
+                rSq = 0;
+        }
+}
+
+void fskDecoder(){
+        if(dsp == 1){
+                chIn = '\0';
+                     if(baudot == B11111){fig = 0; } //LETTERS
+                else if(baudot == B11011){fig = 1; } //FIGURES            
+                else if(baudot == B01000){         } //CR
+                else if(baudot == B00010){chIn = ' ';} //LF
+                else if(baudot == B00100){chIn = ' ';} //SPACE
+                if(fig == 0){
+                             if(baudot == B00011){chIn = 'a';}
+                        else if(baudot == B11001){chIn = 'b';}
+                        else if(baudot == B01110){chIn = 'c';}
+                        else if(baudot == B01001){chIn = 'd';}
+                        else if(baudot == B00001){chIn = 'e';}
+                        else if(baudot == B01101){chIn = 'f';}
+                        else if(baudot == B11010){chIn = 'g';}
+                        else if(baudot == B10100){chIn = 'h';}
+                        else if(baudot == B00110){chIn = 'i';}
+                        else if(baudot == B01011){chIn = 'j';}
+                        else if(baudot == B01111){chIn = 'k';}
+                        else if(baudot == B10010){chIn = 'l';}
+                        else if(baudot == B11100){chIn = 'm';}
+                        else if(baudot == B01100){chIn = 'n';}
+                        else if(baudot == B11000){chIn = 'o';}
+                        else if(baudot == B10110){chIn = 'p';}
+                        else if(baudot == B10111){chIn = 'q';}
+                        else if(baudot == B01010){chIn = 'r';}
+                        else if(baudot == B00101){chIn = 's';}
+                        else if(baudot == B10000){chIn = 't';}
+                        else if(baudot == B00111){chIn = 'u';}
+                        else if(baudot == B11110){chIn = 'v';}
+                        else if(baudot == B10011){chIn = 'w';}
+                        else if(baudot == B11101){chIn = 'x';}
+                        else if(baudot == B10101){chIn = 'y';}
+                        else if(baudot == B10001){chIn = 'z';}
+                }
+                if(fig == 1){
+                             if(baudot == B00011){chIn = '-';}
+                        else if(baudot == B11001){chIn = '?';}
+                        else if(baudot == B01110){chIn = ':';}
+                        else if(baudot == B01001){         }
+                        else if(baudot == B00001){chIn = '3';}
+                        else if(baudot == B01101){         }
+                        else if(baudot == B11010){         }
+                        else if(baudot == B10100){         }
+                        else if(baudot == B00110){chIn = '8';}
+                        else if(baudot == B01011){         }
+                        else if(baudot == B01111){chIn = '(';}
+                        else if(baudot == B10010){chIn = ')';}
+                        else if(baudot == B11100){chIn = '.';}
+                        else if(baudot == B01100){chIn = ',';}
+                        else if(baudot == B11000){chIn = '9';}
+                        else if(baudot == B10110){chIn = '0';}
+                        else if(baudot == B10111){chIn = '1';}
+                        else if(baudot == B01010){chIn = '4';}
+                        else if(baudot == B00101){         }
+                        else if(baudot == B10000){chIn = '5';}
+                        else if(baudot == B00111){chIn = '7';}
+                        else if(baudot == B11110){         }
+                        else if(baudot == B10011){chIn = '2';}
+                        else if(baudot == B11101){chIn = '/';}
+                        else if(baudot == B10101){chIn = '6';}
+                        else if(baudot == B10001){         }
+                }
+                if(chIn != '\0'){
+                          lcd.setCursor(positionCounter, 0);
+                          positionCounter++;
+                          if (positionCounter > 15){
+                              lcd.setCursor(0, 0);
+                              lcd.print("                ");
+                              lcd.setCursor(0, 0);
+                              positionCounter=0;
+                          }
+                          lcd.print(chIn);                
+                }
+                dsp = 0;
+        }
+        delay(5);
+}
+//-------------------------------------------------------------------------------------------------------
+
+void BandDecoder() {
+    
+    // SERIAL IN
+    #if defined(INPUT_SERIAL)
+        // serial.h
+        
+        while (Serial.available() > 0) {
+            BAND = Serial.parseInt();
+            freq = Serial.parseInt();
+            if (Serial.read() == '\n') {
+                bandSET();
+                #if defined(REMOTE_RELAY)
+                    remoteRelay();
+                    previous3 = millis();     // set time mark
+                #endif
+                #if defined(SERIAL_echo)
+                    serialEcho();
+                #endif
+                #if defined(WATCHDOG)
+                    Timeout[3][0] = millis();                      // set time mark
+                #endif
+            }
+        }
+        #if defined(WATCHDOG)
+            watchDog();
+        #endif
+    #endif
+    
+    // ICOM ACC VOLTAGE IN
+    #if defined(ICOM_ACC)
+        if (millis() - Timeout[2][0] > (Timeout[2][1])){
+            VALUE = analogRead(AD); 
+            if (counter == 5) {
+                VOLTAGE = float(VALUE) * 5.0 / 1023.0;
+            
+                //=====[ Icom ACC voltage range ]===========================================================
+            
+                if (VOLTAGE > 0.73 && VOLTAGE < 1.00 ) {BAND=10;}  //   6m   * * * * * * * * * * * * * * * * 
+                if (VOLTAGE > 1.00 && VOLTAGE < 1.09 ) {BAND=9;}   //  10m   *           Need              *
+                if (VOLTAGE > 1.09 && VOLTAGE < 1.32 ) {BAND=8;}   //  12m   *    calibrated to your       *
+                if (VOLTAGE > 1.32 && VOLTAGE < 1.55 ) {BAND=7;}   //  15m   *         own ICOM            *
+                if (VOLTAGE > 1.55 && VOLTAGE < 1.77 ) {BAND=6;}   //  17m   *     ----------------        *
+                if (VOLTAGE > 1.77 && VOLTAGE < 2.24 ) {BAND=5;}   //  20m   *    (These values have       *
+                if (VOLTAGE > 0.10 && VOLTAGE < 0.50 ) {BAND=4;}   //  30m   *   been measured by any)     *
+                if (VOLTAGE > 2.24 && VOLTAGE < 2.73 ) {BAND=3;}   //  40m   *          ic-746             *
+                if (VOLTAGE > 2.73 && VOLTAGE < 2.99 ) {BAND=2;}   //  80m   *                             *
+                if (VOLTAGE > 2.99 && VOLTAGE < 4.00 ) {BAND=1;}   // 160m   * * * * * * * * * * * * * * * * 
+                if (VOLTAGE > 0.00 && VOLTAGE < 0.10 ) {BAND=0;}   // parking
+            
+                //==========================================================================================
+                
+                bandSET();                                // set outputs
+            }else{
+                if (abs(prevVALUE-VALUE)>10) {            // average
+                    //means change or spurious number 
+                    prevVALUE=VALUE;
+                }else {
+                    counter++; 
+                    prevVALUE=VALUE;
+                }
+            }
+            #if defined(REMOTE_RELAY)
+                remoteRelay();
+                previous3 = millis();     // set time mark
+            #endif
+            #if defined(SERIAL_echo)
+                serialEcho();
+                Serial.print(VOLTAGE);
+                Serial.println(" V");
+                Serial.flush();
+            #endif
+            Timeout[2][0] = millis();                      // set time mark
+       }
+    #endif
+    
+    // ICOM CI-V IN
+    #if defined(ICOM_CIV)
+        #ifdef REQUEST
+            if (millis() - Timeout[4][0] > (Timeout[4][1])){
+                txCIV(3, 0, CIV_ADRESS);                    // ([command], [freq]) 3=read
+                Timeout[4][0] = millis();              // set time mark
+            }
+        #endif
+        
+        #if defined(ICOM_CIV)
+            if (Serial2.available() > 0) {
+                incomingByte = Serial2.read();
+                icomSM(incomingByte);
+                rdIS="";
+                if(rdI[10]==0xFD){                    // state machine end
+                    for (int i=9; i>=5; i-- ){
+                        if (rdI[i] < 10) {            // leading zero
+                            rdIS = rdIS + 0;
+                        }
+                        rdIS = rdIS + String(rdI[i], HEX); // append BCD digit from HEX variable to string
+                    }
+                    freq = rdIS.toInt();
+                    FreqToBandRules(freq);                
+                    bandSET();                             // set outputs relay
+                
+                    #if defined(REMOTE_RELAY)
+                        remoteRelay();
+                        previous3 = millis();     // set time mark
+                    #endif
+                    #if defined(SERIAL_echo)
+                        serialEcho();
+                    #endif
+                    #if defined(WATCHDOG)
+                        Timeout[3][0] = millis(); // set time mark
+                    #endif
+                }
+            }
+        #endif
+        
+        #if defined(WATCHDOG)
+            watchDog();
+        #endif
+    #endif
+    
+    // YAESU BCD IN
+    #if defined(YAESU_BCD)
+        if (millis() - Timeout[2][0] > (Timeout[2][1])){
+            YBCD1 = digitalRead(BCD1);
+            YBCD2 = digitalRead(BCD2);
+            YBCD3 = digitalRead(BCD3);
+            YBCD4 = digitalRead(BCD4);        
+            boolean BCDmatrix[4][15] = { /*
+            
+            =======[ Input BCD ]====================================================================
+            
+                      BCD 1 --> */ { 0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0 }, /*
+                      BCD 2 --> */ { 0,  0,  1,  1,  0,  0,  1,  1,  0,  0,  1,  1,  0,  0,  1 }, /*
+                      BCD 3 --> */ { 0,  0,  0,  0,  1,  1,  1,  1,  0,  0,  0,  0,  1,  1,  1 }, /*
+                      BCD 4 --> */ { 0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,  1,  1,  1 }, /*
+                                     |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
+                                     V   V   V   V   V   V   V   V   V   V   V   V   V   V   V
+            -------------------------------------------------------------------------------------
+            Band # in matrix table   0   1   2   3   4   5   6   7   8   9  10  11  12  13  14
+            Yaesu BCD                   160 80  40  30  20  17  15  12  10  6m  <--- free --->     FT-1000MP ?
+            -------------------------------------------------------------------------------------
+            
+            ========================================================================================
+            */};
+            
+            for (bandBCD=0; bandBCD<15; bandBCD++){ 
+                  if (BCDmatrix[0][bandBCD]==BCD1 && BCDmatrix[1][bandBCD]==BCD2 && BCDmatrix[2][bandBCD]==BCD3 && BCDmatrix[3][bandBCD]==BCD4){
+                        BAND=bandBCD;
+                  }
+            }
+            bandSET();                         // set outputs
+            #if defined(REMOTE_RELAY)
+                remoteRelay();
+                previous3 = millis();     // set time mark
+            #endif
+            #if defined(SERIAL_echo)
+                serialEcho();
+            #endif
+            Timeout[2][0] = millis();                      // set time mark
+        }
+    #endif
+    
+    // KENWOOD CAT IN
+    #if defined(KENWOOD_PC)
+        while (Serial2.available()) {
+            rdKS="";
+            Serial2.readBytesUntil(lf, rdK, 38);       // fill array from serial
+                if (rdK[0] == 73 && rdK[1] == 70){     // filter
+                    for (int i=2; i<=12; i++){          // 3-13 position to freq
+                        rdKS = rdKS + String(rdK[i]);   // append variable to string
+                    }
+                    freq = rdKS.toInt();
+                    FreqToBandRules(freq);                
+                    bandSET();                                              // set outputs relay
+            
+                    #if defined(REMOTE_RELAY)
+                        remoteRelay();
+                        previous3 = millis();     // set time mark
+                    #endif
+                    #if defined(SERIAL_echo)
+                        serialEcho();
+                    #endif
+                    #if defined(WATCHDOG)
+                        Timeout[3][0] = millis();                      // set time mark
+                    #endif
+                }
+                memset(rdK, 0, sizeof(rdK));   // Clear contents of Buffer
+        }
+        
+        #if defined(WATCHDOG)
+            watchDog();
+        #endif
+                
+        #if defined(REQUEST)
+            if (millis() - Timeout[4][0] > (Timeout[4][1])){
+                Serial2.print("IF;");
+                Serial2.flush();
+                Timeout[4][0] = millis();              // set time mark
+            }
+        #endif
+    #endif
+    
+    // YAESU CAT IN
+    #if defined(YAESU_CAT)
+        while (Serial2.available()) {
+            rdYS="";
+            Serial2.readBytesUntil(lf, rdY, 38);         // fill array from serial
+                if (rdY[0] == 73 && rdY[1] == 70){      // filter
+                    for (int i=5; i<=12; i++){          // 6-13 position to freq
+                        rdYS = rdYS + String(rdY[i]);   // append variable to string
+                    }
+                    freq = rdYS.toInt();
+                    FreqToBandRules(freq);                
+                    bandSET();                                              // set outputs relay
+            
+                    #if defined(REMOTE_RELAY)
+                        remoteRelay();
+                        previous3 = millis();     // set time mark
+                    #endif
+                    #if defined(SERIAL_echo)
+                        serialEcho();
+                    #endif
+                    #if defined(WATCHDOG)
+                        Timeout[3][0] = millis();                      // set time mark
+                    #endif
+                }
+                memset(rdY, 0, sizeof(rdY));   // Clear contents of Buffer
+        }
+        
+        #if defined(WATCHDOG)
+            watchDog();
+        #endif
+                
+        #if defined(REQUEST)
+            if (millis() - Timeout[4][0] > (Timeout[4][1])){
+                Serial2.print("IF;");
+                Serial2.flush();
+                Timeout[4][0] = millis();              // set time mark
+            }
+        #endif
+    #endif
+    
+    // YAESU CAT OLD IN
+    #if defined(YAESU_CAT_OLD)
+        // tested on FT-817         
+        #ifdef REQUEST
+            if (millis() - Timeout[4][0] > (Timeout[4][1])){
+                Serial2.write(0);                                    // byte 1
+                Serial2.write(0);                                    // byte 2
+                Serial2.write(0);                                    // byte 3
+                Serial2.write(0);                                    // byte 4
+                Serial2.write(3);                                    // read freq
+                Serial2.flush();
+                Timeout[4][0] = millis();              // set time mark
+            }
+        #endif
+        
+        while (Serial2.available()) {
+            rdYOS="";
+            Serial2.readBytesUntil('240', rdYO, 5);                   // fill array from serial (240 = 0xF0)
+            if (rdYO[0] != 0xF0 && rdYO[1] != 0xF0 && rdYO[2] != 0xF0 && rdYO[3] != 0xF0 && rdYO[4] != 0xF0 && rdYO[5] != 0xF0){     // filter
+                for (int i=0; i<4; i++ ){
+                    if (rdYO[i] < 10) {                              // leading zero
+                        rdYOS = rdYOS + 0;
+                    }
+                    rdYOS = rdYOS + String(rdYO[i], HEX);            // append BCD digit from HEX variable to string
+                }
+                rdYOS = rdYOS + 0;                                   // append Hz
+                freq = rdYOS.toInt();
+                FreqToBandRules(freq);                
+                bandSET();                                                                // set outputs relay
+                
+                #if defined(REMOTE_RELAY)
+                    remoteRelay();
+                    previous3 = millis();     // set time mark
+                #endif
+                #if defined(SERIAL_echo)
+                    serialEcho();
+                #endif
+                #if defined(WATCHDOG)
+                    Timeout[3][0] = millis();                      // set time mark
+                #endif
+            }
+            memset(rdYO, 0, sizeof(rdYO));   // Clear contents of Buffer
+        }
+        
+        #if defined(WATCHDOG)
+            watchDog();
+        #endif
+    #endif
+    
+    // Remote relay OUT (not use)
+    #if defined(REMOTE_RELAY)
+        if (millis() - Timeout[4][0] > (Timeout[4][1])){
+            remoteRelay();
+            Timeout[4][0] = millis();              // set time mark
+        }
+    #endif
+    
+    // ICOM CI-V OUT
+    #if defined(ICOM_CIV_OUT)
+        if(freq!= freqPrev1){                    // if change
+            txCIVout(0, freq, CIV_ADR_OUT);         // 0 - set freq
+            freqPrev1 = freq;
+        }
+    #endif
+    
+    // KENWOOD CAT OUT
+    #if defined(KENWOOD_PC_OUT)
+        if(freq != freqPrev2){                     // if change
+            String freqPCtx = String(freq);        // to string
+            while (freqPCtx.length() < 11) {       // leding zeros
+                freqPCtx = 0 + freqPCtx;
+            }
+           Serial3.print("FA" + freqPCtx + ";");    // sets both VFO
+           Serial3.print("FB" + freqPCtx + ";");
+ //          Serial2.print("FA" + freqPCtx + ";");    // first packet not read every time
+           Serial3.flush();
+           freqPrev2 = freq;
+        }
+    #endif
+    
+    // YAESU CAT OUT
+    #if defined(YAESU_CAT_OUT)
+        if(freq != freqPrev2){                     // if change
+            String freqPCtx = String(freq);        // to string
+            while (freqPCtx.length() < 8) {        // leding zeros
+                freqPCtx = 0 + freqPCtx;
+            }
+           Serial3.print("FA" + freqPCtx + ";");    // sets both VFO
+           Serial3.print("FB" + freqPCtx + ";");
+           Serial3.flush();
+           freqPrev2 = freq;
+        }
+    #endif
+    
+    // YAESU CAT OLD OUT
+    #if defined(YAESU_CAT_OUT_OLD)
+        if(freq != freqPrev2){                     // if change
+            String freqPCtx = String(freq);        // to string
+            while (freqPCtx.length() < 8) {        // leding zeros
+                freqPCtx = 0 + freqPCtx;
+           }
+           Serial3.write(1);                       // set freq
+           Serial3.flush();
+           freqPrev2 = freq;
+        }
+    #endif
+}
+
+//-------------------------------------------------------------------------------------------------------
+
+void FreqToBandRules(long freq){
+    //=====[ Frequency (Hz) to Band rules ]======================================
+    //                                        you can expand rules up to 16 BCD Bands
+    
+         if (freq >=   1810000 && freq <=   2000000 )  {BAND=1;}  // 160m
+    else if (freq >=   3500000 && freq <=   3800000 )  {BAND=2;}  //  80m
+    else if (freq >=   7000000 && freq <=   7200000 )  {BAND=3;}  //  40m
+    else if (freq >=  10100000 && freq <=  10150000 )  {BAND=4;}  //  30m
+    else if (freq >=  14000000 && freq <=  14350000 )  {BAND=5;}  //  20m
+    else if (freq >=  18068000 && freq <=  18168000 )  {BAND=6;}  //  17m
+    else if (freq >=  21000000 && freq <=  21450000 )  {BAND=7;}  //  15m
+    else if (freq >=  24890000 && freq <=  24990000 )  {BAND=8;}  //  12m
+    else if (freq >=  28000000 && freq <=  29700000 )  {BAND=9;}  //  10m
+    else if (freq >=  50000000 && freq <=  52000000 ) {BAND=10;}  //   6m
+    else if (freq >= 144000000 && freq <= 146000000 ) {BAND=11;}  //   2m
+    else {BAND=0;}                                                // out of range
+    //===========================================================================
+}
+
+// BAND DATA OUT
+void bandSET() {
+    Timeout[4][0] = millis();              // set time mark REQUESt time out
+    // TODO ETHERNET output
+    #if defined(BCD_OUT)
+        bcdOut();
+    #endif
+}
+
+// REMOTE RELAY OUT (not use)
+void remoteRelay() {
+    Serial.print(1);
+    Serial.print(',');
+    Serial.print(BAND, DEC);
+    Serial.print('\n');
+    Serial.flush();
+} 
+
+// SERIAL OUT
+void serialEcho() {
+    Serial.print("<");
+    Serial.print(BAND);
+    Serial.print(",");
+    Serial.print(freq);
+    Serial.println(">");
+    Serial.flush();
+} 
+
+// BCD OUT
+#if defined(BCD_OUT)
+    void bcdOut(){
+        if (BCDmatrixOUT[0][BAND] == 1){ digitalWrite(BCD1, HIGH); }else{ digitalWrite(BCD1, LOW);;}
+        if (BCDmatrixOUT[1][BAND] == 1){ digitalWrite(BCD2, HIGH); }else{ digitalWrite(BCD2, LOW);;}
+        if (BCDmatrixOUT[2][BAND] == 1){ digitalWrite(BCD3, HIGH); }else{ digitalWrite(BCD3, LOW);;}
+        if (BCDmatrixOUT[3][BAND] == 1){ digitalWrite(BCD4, HIGH); }else{ digitalWrite(BCD4, LOW);;}
+    }
+#endif
+
+// BAND DECODER WATCHDOG
+#if defined(WATCHDOG)
+    void watchDog() {
+        if (millis() - Timeout[3][0] > (Timeout[3][1])){
+            BAND=0;
+            freq=0;
+            Timeout[3][0] = millis();                      // set time mark
+        }
+    }
+#endif
+
+// ICOM STATE MACHINE!
+
+#if defined(ICOM_CIV) || defined(ICOM_CIV_OUT)
+    int icomSM(byte b){      // state machine
+        rdI[10] = 0;
+        // This filter solves read from 0x00 0x05 0x03 commands and 00 E0 F1 address used by software
+        switch (stateMachine) {
+            case 1: if( b == 0xFE ){ stateMachine = 2; rdI[0]=b; }; break;
+            case 2: if( b == 0xFE ){ stateMachine = 3; rdI[1]=b; }else{ stateMachine = 1;}; break;
+            // addresses that use different software 00-trx, e0-pc-ale, winlinkRMS, f1-winlink trimode
+            case 3: if( b == 0x00 || b == 0xE0 || b == 0x0E || b == 0xF1 ){ stateMachine = 4; rdI[2]=b;                       // choose command $03
+              }else if( b == CIV_ADRESS ){ stateMachine = 6; rdI[2]=b;}else{ stateMachine = 1;}; break;                       // or $05
+
+            case 4: if( b == CIV_ADRESS ){ stateMachine = 5; rdI[3]=b; }else{ stateMachine = 1;}; break;                      // select command $03
+            case 5: if( b == 0x00 || b == 0x03 ){stateMachine = 8; rdI[4]=b; }else{ stateMachine = 1;}; break;
+
+            case 6: if( b == 0x00 || b == 0xE0 || b == 0xF1 ){ stateMachine = 7; rdI[3]=b; }else{ stateMachine = 1;}; break;  // select command $05
+            case 7: if( b == 0x00 || b == 0x05 ){ stateMachine = 8; rdI[4]=b; }else{ stateMachine = 1;}; break;            
+            
+            case 8: if( b <= 0x99 ){stateMachine = 9; rdI[5]=b; }else{stateMachine = 1;}; break;
+            case 9: if( b <= 0x99 ){stateMachine = 10; rdI[6]=b; }else{stateMachine = 1;}; break;
+           case 10: if( b <= 0x99 ){stateMachine = 11; rdI[7]=b; }else{stateMachine = 1;}; break;
+           case 11: if( b <= 0x99 ){stateMachine = 12; rdI[8]=b; }else{stateMachine = 1;}; break;
+           case 12: if( b <= 0x99 ){stateMachine = 13; rdI[9]=b; }else{stateMachine = 1;}; break;
+           case 13: if( b == 0xFD ){stateMachine = 1; rdI[10]=b; }else{stateMachine = 1; rdI[10] = 0;}; break;
+        }
+    }
+
+    int txCIV(int commandCIV, long dataCIVtx, int toAddress) {
+        //Serial2.flush();
+        Serial2.write(254);                                    // FE
+        Serial2.write(254);                                    // FE
+        Serial2.write(toAddress);                              // to adress
+        Serial2.write(fromAdress);                             // from OE
+        Serial2.write(commandCIV);                             // data
+        if (dataCIVtx != 0){
+            String freqCIVtx = String(dataCIVtx);             // to string
+            String freqCIVtxPart;
+            while (freqCIVtx.length() < 10) {                 // leding zeros
+                freqCIVtx = 0 + freqCIVtx;
+            }
+            for (int x=8; x>=0; x=x-2){                       // loop for 5x2 char [xx xx xx xx xx]
+                freqCIVtxPart = freqCIVtx.substring(x,x+2);   // cut freq to five part
+                    Serial2.write(hexToDec(freqCIVtxPart));    // HEX to DEC, because write as DEC format from HEX variable
+            }                    
+        }
+        Serial2.write(253);                                    // FD
+        Serial2.flush();
+    }
+
+    int txCIVout(int commandCIV, long dataCIVtx, int toAddress) {
+        //Serial2.flush();
+        Serial3.write(254);                                    // FE
+        Serial3.write(254);                                    // FE
+        Serial3.write(toAddress);                              // to adress
+        Serial3.write(fromAdress);                             // from OE
+        Serial3.write(commandCIV);                             // data
+        if (dataCIVtx != 0){
+            String freqCIVtx = String(dataCIVtx);             // to string
+            String freqCIVtxPart;
+            while (freqCIVtx.length() < 10) {                 // leding zeros
+                freqCIVtx = 0 + freqCIVtx;
+            }
+            for (int x=8; x>=0; x=x-2){                       // loop for 5x2 char [xx xx xx xx xx]
+                freqCIVtxPart = freqCIVtx.substring(x,x+2);   // cut freq to five part
+                    Serial3.write(hexToDec(freqCIVtxPart));    // HEX to DEC, because write as DEC format from HEX variable
+            }                    
+        }
+        Serial3.write(253);                                    // FD
+        Serial3.flush();
+    }
+    
+    unsigned int hexToDec(String hexString) {
+        unsigned int decValue = 0;
+        int nextInt;
+        for (int i = 0; i < hexString.length(); i++) {
+            nextInt = int(hexString.charAt(i));
+            if (nextInt >= 48 && nextInt <= 57) nextInt = map(nextInt, 48, 57, 0, 9);
+            if (nextInt >= 65 && nextInt <= 70) nextInt = map(nextInt, 65, 70, 10, 15);
+            if (nextInt >= 97 && nextInt <= 102) nextInt = map(nextInt, 97, 102, 10, 15);
+            nextInt = constrain(nextInt, 0, 15);
+            decValue = (decValue * 16) + nextInt;
+        }
+        return decValue;
+    }
+#endif
+
+// Open Interface III END -------------------------------------------------------------------------------
+
+void K3NG_key()                                                      // <------------ changed from loop()
+
+{  
   // this is where the magic happens
   
 
@@ -1277,7 +3153,11 @@ void loop()
     #endif //FEATURE_POTENTIOMETER
     
     #ifdef FEATURE_ROTARY_ENCODER
-      check_rotary_encoder();
+      if(StatusArray[2] == HIGH){                     // if Menu                        ___
+        MenuEncoder();                                // activate Menu encoder             |
+      }else{                                          // else                              | Modified for
+        check_rotary_encoder();                       // CW keyer encoder (original line)  | Open Interface III
+      }                                               // endif                          ___|
     #endif //FEATURE_ROTARY_ENCODER
 
     #ifdef FEATURE_PS2_KEYBOARD
