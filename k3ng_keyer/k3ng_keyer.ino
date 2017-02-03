@@ -746,7 +746,7 @@ Recent Update History
 
 //#if defined(FEATURE_ETHERNET)
 #if !defined(ARDUINO_MAPLE_MINI)  
-  #include <Ethernet.h>               // if this is not included, compilation fails even though all ethernet code is #ifdef'ed out
+//  #include <Ethernet.h>               // if this is not included, compilation fails even though all ethernet code is #ifdef'ed out
   #if defined(FEATURE_INTERNET_LINK)
     #include <EthernetUdp.h>
   #endif //FEATURE_INTERNET_LINK
@@ -1295,6 +1295,10 @@ oi3a
 #define BAND_DECODER             // enable Band decoder
 #define FSK_TX                   // enable RTTY keying
 #define FSK_RX                   // enable RTTY decoder
+//#define ETHERNET_MODULE          // enable ETHERNET module (must be installed) EXPERIMENTAL
+#define MQTT_PATH "hra/oi3"
+#define MQTT_USER "hra"          // MQTT broker user login
+#define MQTT_PASS "pass"    // MQTT broker password
 
 #define YOUR_CALL "OK1HRA"
 #define MODE_AFTER_POWER_UP 4        // MODE after start up
@@ -1329,7 +1333,7 @@ oi3a
  #define CIV_ADRESS   0x56       // CIV input HEX Icom adress (0x is prefix)
 // #define CIV_ADR_OUT  0x56     // CIV output HEX Icom adress (0x is prefix)
 
-char* ANTname[17] = {            // Name antennas on LCD
+char* ANTname[17] = {            // Band decoder (BCD output) antennas name on LCD
     "-",
     "Dipole",     // Band 1
     "Vertical",   // Band 2
@@ -1348,6 +1352,26 @@ char* ANTname[17] = {            // Name antennas on LCD
     "-",  // Band 15
     "-"  // Band 16
 };
+
+// ETHERNET - MQTT
+#if defined(ETHERNET_MODULE)
+  #include <SPI.h>
+  #include <Ethernet2.h> // and disable on line #749
+  #include <PubSubClient.h>
+  byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEE};
+  #define __USE_DHCP__                    // Uncoment to Enable DHCP
+  IPAddress ip(192, 168, 1, 220);         // IP
+  IPAddress gateway(192, 168, 1, 200);    // GATE
+  IPAddress subnet(255, 255, 255, 0);     // MASK
+  IPAddress myDns(8, 8, 8, 8);            // DNS (google pub)
+  //EthernetServer server(80);              // server PORT
+  //IPAddress ip(192, 168, 1, 77);
+  IPAddress server(192, 168, 1, 200);       // MQTT broker IP address
+  EthernetClient ethClient;
+  PubSubClient client(ethClient);
+//  PubSubClient client(server, 1883, callback, ethClient);
+
+#endif
 
 // Serial2FSK (FSK TX)
 #define SERBAUD0  115200         // Serial0 in/out baudrate (seria2fsk, )
@@ -1493,7 +1517,7 @@ char* modeLCD[6][2]= {
     {"|DIG", "Data  AFSK"},
 };
 
-char* MenuTree[14]= { // [radky][sloupce]
+char* MenuTree[15]= { // [radky][sloupce]
   YOUR_CALL,         //  0 call
   "PCB 3.141",       //  1
   "DCin",            //  2
@@ -1508,6 +1532,7 @@ char* MenuTree[14]= { // [radky][sloupce]
   "FSKlead",         // 11
   "FSKtail",         // 12
   "",                // 13  MODE fullname
+  "",                // 14  IP switch
 };
 #define MenuTreeSize (sizeof(MenuTree)/sizeof(char *)) //array size  
 int CulumnPositionEnd;
@@ -1727,11 +1752,31 @@ void setup()
   digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
   digitalWrite (AFSK, LOW);
 
+  //ETHERNET - MQTT
+  #if defined(ETHERNET_MODULE)
+    #if defined __USE_DHCP__  // initialize the ethernet device
+      Ethernet.begin(mac);
+    #else
+      Ethernet.begin(mac, ip, myDns, gateway, subnet);
+    #endif
+    client.setServer(server, 1883);
+    //client.setCallback(callback);
+    lcd.setCursor(1, 0);
+    lcd.print(F("IP address:"));
+    delay(1000);
+    lcd.setCursor(1, 0);
+    lcd.print(Ethernet.localIP());
+//    if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
+//      client.publish(MQTT_PATH,"pwr-up");  
+//    }
+  #endif
+
 } // SETUP END
 
 //-------------------------------------------------------------------------------------------------------
 
 void loop() {
+//    OpenInterfaceIntelock();
     #if defined(BAND_DECODER)
       BandDecoder();
     #endif
@@ -1739,11 +1784,32 @@ void loop() {
     OpenInterfaceLCD();   // second line print
     OpenInterfaceMENU();  // Menu button and HW preset
     OpenInterfaceMODE();  // MODE in->out and features 
-
 }    // end loop
 
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
+void OpenInterfaceIntelock(){
+          #if defined(ETHERNET_MODULE)
+            MqttPub("interlock", 0, 0);     // <-------------- move to INTERRUPT
+          #endif
+}
+
+#if defined(ETHERNET_MODULE)
+void MqttPub(String path, float value, int value2){
+  if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
+    char mqttTX[50];
+    char mqttPath[20];    
+    String path2 = String(MQTT_PATH) + "/" + path;
+    path2.toCharArray( mqttPath, 20 );
+    if (value != 0){
+      String(value).toCharArray( mqttTX, 50 );
+    }else{
+      String(value2).toCharArray( mqttTX, 50 );
+    }
+    client.publish(mqttPath, mqttTX);  
+  }
+}
+#endif
 
 void DCinMeasure(){
   if (millis() - Timeout[7][0] > (Timeout[7][1])){
@@ -1758,6 +1824,9 @@ void DCinMeasure(){
       Loop[1]= 2;
     }
     Timeout[7][0] = millis();                      // set time mark
+    #if defined(ETHERNET_MODULE)
+      MqttPub("pwrvoltage", DCinVoltage, 0);
+    #endif
   }
 
 }
@@ -1987,6 +2056,9 @@ void OpenInterfaceMENU(){
               if(Loop[0]==6){
                 Loop[0]=0;
               }
+              #if defined(ETHERNET_MODULE)
+                MqttPub("mode", 0, Loop[0]);
+              #endif              
               switch (Loop[0]) {
                 case 0:{ // CW Keyer
                     digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
@@ -2066,9 +2138,15 @@ void OpenInterfaceMODE(){
     }
     case 2:{ // SSB
       if(digitalRead(FootSW)==LOW || digitalRead(PTT232)==HIGH){   // FootSW / 232(usb audio-ssb pc memory) PTT
-        digitalWrite (PTT3, HIGH);      
+        digitalWrite (PTT3, HIGH);
+          #if defined(ETHERNET_MODULE)
+            MqttPub("footsw", 0, 1);
+          #endif
       }else{
         digitalWrite (PTT3, LOW);
+          #if defined(ETHERNET_MODULE)
+            MqttPub("footsw", 0, 0);
+          #endif
       }
       MenuEncoder();
     break;
@@ -2969,10 +3047,16 @@ void FreqToBandRules(long freq){
 // BAND DATA OUT
 void bandSET() {
     Timeout[4][0] = millis();              // set time mark REQUESt time out
-    // TODO ETHERNET output
     #if defined(BCD_OUT)
         bcdOut();
     #endif
+    #if defined(ETHERNET_MODULE)
+    float freqPub = freq;
+    freqPub = freqPub/1000;
+      MqttPub("khz", freqPub, 0);
+      MqttPub("band", 0, BAND);
+    #endif
+
 }
 
 // REMOTE RELAY OUT (not use)
