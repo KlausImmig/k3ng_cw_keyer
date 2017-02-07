@@ -1205,7 +1205,7 @@ unsigned long automatic_sending_interruption_time = 0;
   Open Interface III
   ----------------------
   https://remoteqth.com/open-interface.php
-  2017-01 by OK1HRA with RTTY code from JI3BNB
+  by OK1HRA with RTTY code from JI3BNB
   rev 3,141
 
    ___               _        ___ _____ _  _
@@ -1270,8 +1270,11 @@ Dhcp.h change from
 to
   int beginWithDHCP(uint8_t *, unsigned long timeout = 6000, unsigned long responseTimeout = 5000);  
 
+Changelog:
+  2017-02 MQTT support
+
 TODO:
-- detect ethernet module
+- disable Ethernet, if press Mode button at startup
 - Sequencer
 - move configuration to SD card
 - use interrupt for
@@ -1281,6 +1284,7 @@ TODO:
 - save last MODE to eeprom?
 - two fsk mem from elbug
 - ssb ptt from elbug
+- MqttPub tx ascii
 
 rev 141
 Serial0 - CLI serial2fsk in keyer_settings_open_interface.h
@@ -1295,11 +1299,17 @@ oi3a
 #define BAND_DECODER             // enable Band decoder
 #define FSK_TX                   // enable RTTY keying
 #define FSK_RX                   // enable RTTY decoder
-//#define ETHERNET_MODULE          // enable ETHERNET module (must be installed) EXPERIMENTAL
+#define ETHERNET_MODULE          // enable ETHERNET module (must be installed) EXPERIMENTAL
 #define MQTT_PATH "hra/oi3"
+#define MQTT_PORT 1883           // MQTT broker PORT
+//#define MQTT_LOGIN               // enable MQTT broker login
 #define MQTT_USER "hra"          // MQTT broker user login
-#define MQTT_PASS "pass"    // MQTT broker password
-
+#define MQTT_PASS ""    // MQTT broker password
+#define UDP_RTTY_PORT    89      // UDP port listen to RTTY character (FSK mode)
+#define UDP_COMMAND_PORT 88      // UDP port listen to command
+                                 // m:#;  - Mode 0-5
+                                 // p:#;  - PTT on/off (not implemented yet)
+                                 // i:#;  - Inhibit on/off (not implemented yet)
 #define YOUR_CALL "OK1HRA"
 #define MODE_AFTER_POWER_UP 4        // MODE after start up
 #define MENU_AFTER_POWER_UP 7        // MENU after start up
@@ -1357,6 +1367,7 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas name on L
 #if defined(ETHERNET_MODULE)
   #include <SPI.h>
   #include <Ethernet2.h> // and disable on line #749
+  #include <EthernetUdp2.h>
   #include <PubSubClient.h>
   byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEE};
   #define __USE_DHCP__                    // Uncoment to Enable DHCP
@@ -1366,11 +1377,19 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas name on L
   IPAddress myDns(8, 8, 8, 8);            // DNS (google pub)
   //EthernetServer server(80);              // server PORT
   //IPAddress ip(192, 168, 1, 77);
-  IPAddress server(192, 168, 1, 200);       // MQTT broker IP address
+//  IPAddress server(192, 168, 1, 200);       // MQTT broker IP address
+  IPAddress server(37, 187, 106, 16);       // MQTT broker IP address
   EthernetClient ethClient;
   PubSubClient client(ethClient);
 //  PubSubClient client(server, 1883, callback, ethClient);
-
+  unsigned int UdpCommandPort = 88; // local UDP port to listen on
+  unsigned int UdpRttyPort = 89;       // local UDP port to listen on
+  char packetBuffer[UDP_TX_PACKET_MAX_SIZE]; //buffer to hold incoming packet,
+  int UDPpacketSize;
+  char mqttTX[50];
+  char mqttPath[20];    
+  EthernetUDP UdpCommand; // An EthernetUDP instance to let us send and receive packets over UDP
+  EthernetUDP UdpRtty;
 #endif
 
 // Serial2FSK (FSK TX)
@@ -1386,7 +1405,8 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas name on L
 #define FSPACE   LOW             // FSK space level [LOW/HIGH]
 #define BaudRate 45.45           // RTTY baud rate
 #define StopBit  1.5             // stop bit long
-String FSKmemory[3]= {
+String FSKmemory[4]= {
+  "",                            // reserve for incoming UDP string
   "cq de ok1hra ok1hra k",       // Memory 0 button
   " ok1hra ",                    // Memory 1 button
   " 599 15 "                     // Memory 2 button
@@ -1537,11 +1557,12 @@ char* MenuTree[15]= { // [radky][sloupce]
 #define MenuTreeSize (sizeof(MenuTree)/sizeof(char *)) //array size  
 int CulumnPositionEnd;
 
-byte StatusArray[4] = {
+byte StatusArray[5] = {
   HIGH,   // MODE lastbuttonstate
   HIGH,   // MODE debounced signal
   LOW,    // LOW-MODE | HIGH MENU
   LOW,    // PTT232 enable
+  LOW,    // FootSW change
 };
 
 // FSK RX
@@ -1752,23 +1773,37 @@ void setup()
   digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
   digitalWrite (AFSK, LOW);
 
-  //ETHERNET - MQTT
+  //ETHERNET - MQTT - UDP
   #if defined(ETHERNET_MODULE)
     #if defined __USE_DHCP__  // initialize the ethernet device
       Ethernet.begin(mac);
     #else
       Ethernet.begin(mac, ip, myDns, gateway, subnet);
     #endif
-    client.setServer(server, 1883);
+    client.setServer(server, MQTT_PORT);
     //client.setCallback(callback);
+    UdpCommand.begin(UdpCommandPort);   // UDP
+    UdpRtty.begin(UdpRttyPort);
+
     lcd.setCursor(1, 0);
     lcd.print(F("IP address:"));
     delay(1000);
     lcd.setCursor(1, 0);
     lcd.print(Ethernet.localIP());
-//    if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
-//      client.publish(MQTT_PATH,"pwr-up");  
-//    }
+#if defined(MQTT_LOGIN)
+if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
+#else
+if (client.connect("arduinoClient")) {
+#endif
+
+//    if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {          // public IP addres to MQTT
+      IPAddress IPlocalAddr = Ethernet.localIP();
+      String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);
+      IPlocalAddrString.toCharArray( mqttTX, 50 );
+      String path2 = String(MQTT_PATH) + "/ip";
+      path2.toCharArray( mqttPath, 20 );
+      client.publish(mqttPath, mqttTX);
+    }
   #endif
 
 } // SETUP END
@@ -1784,8 +1819,10 @@ void loop() {
     OpenInterfaceLCD();   // second line print
     OpenInterfaceMENU();  // Menu button and HW preset
     OpenInterfaceMODE();  // MODE in->out and features 
+    #if defined(ETHERNET_MODULE)
+      IncomingUDP();      // Incomming UDP command and transmit characters
+    #endif
 }    // end loop
-
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
 void OpenInterfaceIntelock(){
@@ -1795,10 +1832,64 @@ void OpenInterfaceIntelock(){
 }
 
 #if defined(ETHERNET_MODULE)
+void IncomingUDP(){
+  // RTTY transmit incoming string
+  UDPpacketSize = UdpRtty.parsePacket();    // if there's data available, read a packet
+  if (UDPpacketSize){
+    if(Loop[0]==3 || Loop[0]==4){               // if mode FSK
+      UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
+      FSKmemory[0] = packetBuffer;
+      FSKmemoryTX(0);
+    }
+    memset(packetBuffer, 0, sizeof(packetBuffer));   // if mode no FSK or after TX, clear Buffer
+  }  
+//    delay(10);
+
+  // COMMANDS
+  UDPpacketSize = UdpCommand.parsePacket();    // if there's data available, read a packet
+  if (UDPpacketSize){
+    UdpCommand.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
+//    lcd.setCursor(0, 1);
+//    lcd.print(packetBuffer);
+//    lcd.print(" ");
+    
+    // INTERLOCK
+    if (packetBuffer[0] == 'i' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
+      if(packetBuffer[2] == '0'){
+        lcd.print("LOW   ");
+      }else if(packetBuffer[2] == '1'){
+        lcd.print("HIGH");
+      }
+    }
+    
+    // PTT
+    if (packetBuffer[0] == 'p' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
+      if(packetBuffer[2] == '0'){
+        lcd.print("ptt");
+      }else if(packetBuffer[2] == '1'){
+        lcd.print("PTT");
+      }
+    }
+    
+    // MODE
+    if (packetBuffer[0] == 'm' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
+      tmp = packetBuffer[2]-'0';  // convert to int for compare
+      if(tmp >= 0 && tmp <= 5){
+        Loop[0] = tmp;
+        MqttPub("mode", 0, Loop[0]);
+      }
+    }
+//    lcd.print("      ");
+  memset(packetBuffer, 0, sizeof(packetBuffer));   // Clear contents of Buffer
+  }
+}
+
 void MqttPub(String path, float value, int value2){
-  if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
-    char mqttTX[50];
-    char mqttPath[20];    
+#if defined(MQTT_LOGIN)
+if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
+#else
+if (client.connect("arduinoClient")) {
+#endif
     String path2 = String(MQTT_PATH) + "/" + path;
     path2.toCharArray( mqttPath, 20 );
     if (value != 0){
@@ -1806,7 +1897,7 @@ void MqttPub(String path, float value, int value2){
     }else{
       String(value2).toCharArray( mqttTX, 50 );
     }
-    client.publish(mqttPath, mqttTX);  
+    client.publish(mqttPath, mqttTX);
   }
 }
 #endif
@@ -1828,7 +1919,6 @@ void DCinMeasure(){
       MqttPub("pwrvoltage", DCinVoltage, 0);
     #endif
   }
-
 }
 
 void OpenInterfaceLCD(){    // LCD
@@ -1864,7 +1954,6 @@ void OpenInterfaceLCD(){    // LCD
         }
         lcd.print(Loop[1]);
       }
-
     }
 }
 
@@ -2022,8 +2111,7 @@ void MenuToLCD(int nr){
   while (CulumnPosition < CulumnPositionEnd) {    // if short, apend spaces
     lcd.print(" ");
     CulumnPosition++;
-}
-
+  }
 }
 
 void OpenInterfaceMENUtimeout(){
@@ -2138,15 +2226,21 @@ void OpenInterfaceMODE(){
     }
     case 2:{ // SSB
       if(digitalRead(FootSW)==LOW || digitalRead(PTT232)==HIGH){   // FootSW / 232(usb audio-ssb pc memory) PTT
-        digitalWrite (PTT3, HIGH);
+        if(StatusArray[4] != 1){          // if change
+          digitalWrite (PTT3, HIGH);
+          StatusArray[4] = 1;
           #if defined(ETHERNET_MODULE)
             MqttPub("footsw", 0, 1);
           #endif
+        }
       }else{
-        digitalWrite (PTT3, LOW);
+        if(StatusArray[4] != 0){
+          digitalWrite (PTT3, LOW);
+          StatusArray[4] = 0;
           #if defined(ETHERNET_MODULE)
             MqttPub("footsw", 0, 0);
           #endif
+        }
       }
       MenuEncoder();
     break;
@@ -2260,11 +2354,11 @@ float volt(int raw, float K, float DELTA) {
 void ButtonFSK(){
   tmp = analogRead(MEM);
   if(tmp < 5){
-    FSKmemoryTX(0);
-  }else if(tmp > 45 && tmp < 130){
     FSKmemoryTX(1);
-  }else if(tmp > 130 && tmp < 210){
+  }else if(tmp > 45 && tmp < 130){
     FSKmemoryTX(2);
+  }else if(tmp > 130 && tmp < 210){
+    FSKmemoryTX(3);
   }
 }
 
