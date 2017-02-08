@@ -1300,7 +1300,7 @@ oi3a
 #define FSK_TX                   // enable RTTY keying
 #define FSK_RX                   // enable RTTY decoder
 #define ETHERNET_MODULE          // enable ETHERNET module (must be installed) EXPERIMENTAL
-#define MQTT_PATH "hra/oi3"
+#define MQTT_PATH "ol7m/oi3"
 #define MQTT_PORT 1883           // MQTT broker PORT
 //#define MQTT_LOGIN               // enable MQTT broker login
 #define MQTT_USER "hra"          // MQTT broker user login
@@ -1375,10 +1375,8 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas name on L
   IPAddress gateway(192, 168, 1, 200);    // GATE
   IPAddress subnet(255, 255, 255, 0);     // MASK
   IPAddress myDns(8, 8, 8, 8);            // DNS (google pub)
-  //EthernetServer server(80);              // server PORT
-  //IPAddress ip(192, 168, 1, 77);
 //  IPAddress server(192, 168, 1, 200);       // MQTT broker IP address
-  IPAddress server(37, 187, 106, 16);       // MQTT broker IP address
+  IPAddress server(37, 187, 106, 16);       // test.mosquitto.org MQTT broker
   EthernetClient ethClient;
   PubSubClient client(ethClient);
 //  PubSubClient client(server, 1883, callback, ethClient);
@@ -1394,7 +1392,7 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas name on L
 
 // Serial2FSK (FSK TX)
 #define SERBAUD0  115200         // Serial0 in/out baudrate (seria2fsk, )
-#define AFSK_ENABLE              // AFSK AUDIO (serial2fsk, fsk memory)
+//#define AFSK_ENABLE            // AFSK AUDIO (serial2fsk, fsk memory)
 //#define SERIAL_FSK_TX_ECHO     // enable TX echo on serial port
 //#define SHOW_HIDDEN_FSK_CHAR   // show invisible TX characters on LCD
 #define PTTlead  400             // FSK PTT lead delay ms
@@ -1405,11 +1403,13 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas name on L
 #define FSPACE   LOW             // FSK space level [LOW/HIGH]
 #define BaudRate 45.45           // RTTY baud rate
 #define StopBit  1.5             // stop bit long
-String FSKmemory[4]= {
+String FSKmemory[6]= {
   "",                            // reserve for incoming UDP string
-  "cq de ok1hra ok1hra k",       // Memory 0 button
+  " cq de ok1hra ok1hra k",      // Memory 0 button
   " ok1hra ",                    // Memory 1 button
-  " 599 15 "                     // Memory 2 button
+  " 599 15 ",                    // Memory 2 button
+  " CQ OL7M OL7M ",              // Memory CW Left paddle
+  " OL7M "                       // Memory CW Right paddle
 };
 
 // TIMEOUTS
@@ -1802,7 +1802,7 @@ if (client.connect("arduinoClient")) {
       IPlocalAddrString.toCharArray( mqttTX, 50 );
       String path2 = String(MQTT_PATH) + "/ip";
       path2.toCharArray( mqttPath, 20 );
-      client.publish(mqttPath, mqttTX);
+      client.publish(mqttPath, mqttTX, true);
     }
   #endif
 
@@ -1897,7 +1897,7 @@ if (client.connect("arduinoClient")) {
     }else{
       String(value2).toCharArray( mqttTX, 50 );
     }
-    client.publish(mqttPath, mqttTX);
+    client.publish(mqttPath, mqttTX, true);
   }
 }
 #endif
@@ -2359,6 +2359,10 @@ void ButtonFSK(){
     FSKmemoryTX(2);
   }else if(tmp > 130 && tmp < 210){
     FSKmemoryTX(3);
+  }else if(digitalRead(PADDLER) == LOW){
+    FSKmemoryTX(4);
+  }else if(digitalRead(PADDLEL) == LOW){
+    FSKmemoryTX(5);
   }
 }
 
