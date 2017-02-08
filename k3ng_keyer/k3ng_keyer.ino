@@ -1300,11 +1300,11 @@ oi3a
 #define FSK_TX                   // enable RTTY keying
 #define FSK_RX                   // enable RTTY decoder
 #define ETHERNET_MODULE          // enable ETHERNET module (must be installed) EXPERIMENTAL
-#define MQTT_PATH "ol7m/oi3"
+#define MQTT_PATH "hra/oi3"
 #define MQTT_PORT 1883           // MQTT broker PORT
 //#define MQTT_LOGIN               // enable MQTT broker login
 #define MQTT_USER "hra"          // MQTT broker user login
-#define MQTT_PASS ""    // MQTT broker password
+#define MQTT_PASS ".....-..-"    // MQTT broker password
 #define UDP_RTTY_PORT    89      // UDP port listen to RTTY character (FSK mode)
 #define UDP_COMMAND_PORT 88      // UDP port listen to command
                                  // m:#;  - Mode 0-5
