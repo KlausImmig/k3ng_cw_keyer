@@ -746,7 +746,7 @@ Recent Update History
 
 //#if defined(FEATURE_ETHERNET)
 #if !defined(ARDUINO_MAPLE_MINI)  
-//  #include <Ethernet.h>               // if this is not included, compilation fails even though all ethernet code is #ifdef'ed out
+//  #include <Ethernet.h>               // if this is not included, compilation fails even though all ethernet code is #ifdef'ed out    // disable, but Open Interface III use Ethernet2 libraty
   #if defined(FEATURE_INTERNET_LINK)
     #include <EthernetUdp.h>
   #endif //FEATURE_INTERNET_LINK
@@ -1284,7 +1284,7 @@ TODO:
 - save last MODE to eeprom?
 - two fsk mem from elbug
 - ssb ptt from elbug
-- MqttPub tx ascii
+- MqttPub tx fsk/cw ascii
 
 rev 141
 Serial0 - CLI serial2fsk in keyer_settings_open_interface.h
@@ -1307,9 +1307,9 @@ oi3a
 #define MQTT_PASS ""    // MQTT broker password
 #define UDP_RTTY_PORT    89      // UDP port listen to RTTY character (FSK mode)
 #define UDP_COMMAND_PORT 88      // UDP port listen to command
-                                 // m:#;  - Mode 0-5
-                                 // p:#;  - PTT on/off (not implemented yet)
-                                 // i:#;  - Inhibit on/off (not implemented yet)
+                                 // m:#;   - Mode # 0-5
+                                 // i:#;   - INTERLOCK # 0/1 (on/off)
+                                 // p:#:%; - PTT # 0/1 (on/off), % 0-3 (0=PTTPA, 1=PTT1, 2=PTT2, 3=PTT3) 
 #define YOUR_CALL "OK1HRA"
 #define MODE_AFTER_POWER_UP 4        // MODE after start up
 #define MENU_AFTER_POWER_UP 7        // MENU after start up
@@ -1557,13 +1557,18 @@ char* MenuTree[15]= { // [radky][sloupce]
 #define MenuTreeSize (sizeof(MenuTree)/sizeof(char *)) //array size  
 int CulumnPositionEnd;
 
-byte StatusArray[5] = {
+byte StatusArray[9] = {
   HIGH,   // MODE lastbuttonstate
   HIGH,   // MODE debounced signal
   LOW,    // LOW-MODE | HIGH MENU
-  LOW,    // PTT232 enable
+  LOW,    // PTT232 active
   LOW,    // FootSW change
+  LOW,    // PTT-PA active
+  LOW,    // PTT1 active
+  LOW,    // PTT2 active
+  LOW,    // PTT3 active
 };
+//byte ptt_interlock_active = 0;  // define in K3NG code
 
 // FSK RX
 #include <FlexiTimer2.h>
@@ -1797,9 +1802,9 @@ if (client.connect("arduinoClient")) {
 #endif
 
 //    if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {          // public IP addres to MQTT
-      IPAddress IPlocalAddr = Ethernet.localIP();
-      String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);
-      IPlocalAddrString.toCharArray( mqttTX, 50 );
+      IPAddress IPlocalAddr = Ethernet.localIP();                           // get
+      String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
+      IPlocalAddrString.toCharArray( mqttTX, 50 );                          // to array
       String path2 = String(MQTT_PATH) + "/ip";
       path2.toCharArray( mqttPath, 20 );
       client.publish(mqttPath, mqttTX, true);
@@ -1811,7 +1816,7 @@ if (client.connect("arduinoClient")) {
 //-------------------------------------------------------------------------------------------------------
 
 void loop() {
-//    OpenInterfaceIntelock();
+    OpenInterfaceIntelock();
     #if defined(BAND_DECODER)
       BandDecoder();
     #endif
@@ -1825,13 +1830,26 @@ void loop() {
 }    // end loop
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
-void OpenInterfaceIntelock(){
-          #if defined(ETHERNET_MODULE)
-            MqttPub("interlock", 0, 0);     // <-------------- move to INTERRUPT
-          #endif
+void OpenInterfaceIntelock(){                                 // <-------------- move to INTERRUPT?
+  if ((digitalRead(INTERLOCK)^1) != ptt_interlock_active) {   // if change
+      ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
+      if(ptt_interlock_active == 1){
+        digitalWrite (PTT1, LOW);
+        digitalWrite (PTT2, LOW);
+        digitalWrite (PTT3, LOW);
+        digitalWrite (PTTPA, LOW);
+        #if defined(ETHERNET_MODULE)
+          MqttPub("ptt", 0, 0);
+        #endif
+      }
+      #if defined(ETHERNET_MODULE)
+        MqttPub("interlock", 0, ptt_interlock_active);
+      #endif
+  }
 }
 
 #if defined(ETHERNET_MODULE)
+// Incoming UDP commands
 void IncomingUDP(){
   // RTTY transmit incoming string
   UDPpacketSize = UdpRtty.parsePacket();    // if there's data available, read a packet
@@ -1849,25 +1867,34 @@ void IncomingUDP(){
   UDPpacketSize = UdpCommand.parsePacket();    // if there's data available, read a packet
   if (UDPpacketSize){
     UdpCommand.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
-//    lcd.setCursor(0, 1);
-//    lcd.print(packetBuffer);
-//    lcd.print(" ");
     
     // INTERLOCK
     if (packetBuffer[0] == 'i' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
-      if(packetBuffer[2] == '0'){
-        lcd.print("LOW   ");
-      }else if(packetBuffer[2] == '1'){
-        lcd.print("HIGH");
-      }
+      ptt_interlock_active = packetBuffer[2]-'0';  // convert to int for compare
+      #if defined(ETHERNET_MODULE)
+        MqttPub("interlock", 0, ptt_interlock_active);
+      #endif
     }
     
     // PTT
-    if (packetBuffer[0] == 'p' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
+    if (packetBuffer[0] == 'p' && packetBuffer[1] == ':' && packetBuffer[3] == ':' && packetBuffer[5] == ';'){
+      if(packetBuffer[4] == '0'){tmp = PTTPA;}
+      else if(packetBuffer[4] == '1'){tmp = PTT1;}
+      else if(packetBuffer[4] == '2'){tmp = PTT2;}
+      else if(packetBuffer[4] == '3'){tmp = PTT3;}
+      else{tmp = PTTPA;}
       if(packetBuffer[2] == '0'){
-        lcd.print("ptt");
+        if(ptt_interlock_active == 0){  // if interlock not active
+          digitalWrite (tmp, HIGH);
+          #if defined(ETHERNET_MODULE)
+            MqttPub("ptt", 0, 1);
+          #endif
+        }
       }else if(packetBuffer[2] == '1'){
-        lcd.print("PTT");
+          digitalWrite (tmp, HIGH);
+          #if defined(ETHERNET_MODULE)
+            MqttPub("ptt", 0, 0);
+          #endif
       }
     }
     
@@ -2208,16 +2235,22 @@ void OpenInterfaceMODE(){
         K3NG_key();
       #endif
     break;
-    }
+    }    
     case 1:{ // CW PC
-      if(digitalRead(PTT232)==HIGH){   // PTT-232
-        digitalWrite (PTT1, HIGH);
+      if(digitalRead(PTT232)==HIGH && StatusArray[3] == LOW){    // PTT-232
         StatusArray[3] = HIGH;
-      }else{
-        if(StatusArray[3] == HIGH){       // only if activate from PTT232
-          digitalWrite (PTT1, LOW);
-          StatusArray[3] = LOW;
+        if(ptt_interlock_active == 0){  // if interlock not active
+          digitalWrite (PTT1, HIGH);
+          #if defined(ETHERNET_MODULE)
+            MqttPub("ptt", 0, 1);
+          #endif
         }
+      }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
+        digitalWrite (PTT1, LOW);
+        StatusArray[3] = LOW;
+        #if defined(ETHERNET_MODULE)
+          MqttPub("ptt", 0, 0);
+        #endif
       }
       #if defined(K3NG_KEYER)
         K3NG_key();
@@ -2227,11 +2260,14 @@ void OpenInterfaceMODE(){
     case 2:{ // SSB
       if(digitalRead(FootSW)==LOW || digitalRead(PTT232)==HIGH){   // FootSW / 232(usb audio-ssb pc memory) PTT
         if(StatusArray[4] != 1){          // if change
-          digitalWrite (PTT3, HIGH);
-          StatusArray[4] = 1;
-          #if defined(ETHERNET_MODULE)
-            MqttPub("footsw", 0, 1);
-          #endif
+          if(ptt_interlock_active == 0){  // if interlock not active
+            digitalWrite (PTT3, HIGH);
+            StatusArray[4] = 1;
+            #if defined(ETHERNET_MODULE)
+              if(digitalRead(FootSW)==LOW){MqttPub("footsw", 0, 1);}
+              MqttPub("ptt", 0, 1);
+            #endif
+          }
         }
       }else{
         if(StatusArray[4] != 0){
@@ -2239,6 +2275,7 @@ void OpenInterfaceMODE(){
           StatusArray[4] = 0;
           #if defined(ETHERNET_MODULE)
             MqttPub("footsw", 0, 0);
+            MqttPub("ptt", 0, 0);
           #endif
         }
       }
@@ -2252,10 +2289,20 @@ void OpenInterfaceMODE(){
       #if defined(FSK_TX)
         ButtonFSK();
       #endif
-      if(digitalRead(PTT232)==HIGH){   // PTT232
-        digitalWrite (PTT1, HIGH);
-      }else{
+      if(digitalRead(PTT232)==HIGH && StatusArray[3] == LOW){    // PTT-232
+        StatusArray[3] = HIGH;
+        if(ptt_interlock_active == 0){  // if interlock not active
+          digitalWrite (PTT1, HIGH);
+          #if defined(ETHERNET_MODULE)
+            MqttPub("ptt", 0, 1);
+          #endif
+        }
+      }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
+        StatusArray[3] = LOW;
         digitalWrite (PTT1, LOW);
+        #if defined(ETHERNET_MODULE)
+          MqttPub("ptt", 0, 0);
+        #endif
       }
       MenuEncoder();
     break;
@@ -2269,50 +2316,25 @@ void OpenInterfaceMODE(){
     break;
     }
     case 5:{ // DIGITAL (AFSK)
-      if(digitalRead(PTT232)==HIGH){   // PTT-232
-        digitalWrite (PTT1, HIGH);
-      }else{
+      if(digitalRead(PTT232)==HIGH && StatusArray[3] == LOW){    // PTT-232
+        StatusArray[3] = HIGH;
+        if(ptt_interlock_active == 0){  // if interlock not active
+          digitalWrite (PTT1, HIGH);
+          #if defined(ETHERNET_MODULE)
+            MqttPub("ptt", 0, 1);
+          #endif
+        }
+      }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
+        StatusArray[3] = LOW;
         digitalWrite (PTT1, LOW);
+        #if defined(ETHERNET_MODULE)
+          MqttPub("ptt", 0, 0);
+        #endif
       }
-      Button1(PTT1);  //for testing
       MenuEncoder();
     break;
     }  
   }  // endswitch 
-}
-
-void Button1(int OUT){
-  tmp = analogRead(MEM);
-  if(tmp > 45 && tmp < 130){
-    digitalWrite (OUT, HIGH);
-  }else{
-    digitalWrite (OUT, LOW);
-  }
-}
-void Button2_tone(int OUT2){
-  tmp = analogRead(MEM);
-  if(tmp > 130 && tmp < 210){
-    digitalWrite (OUT2, HIGH);
-    #if defined(CW_TONE)
-      tone(TONE, CW_TONE);
-    #endif
-  }else{
-    digitalWrite (OUT2, LOW);
-    #if defined(CW_TONE)
-      if(digitalRead(FSKDET)==HIGH){  // if H run tone from FSKDET
-        noTone(TONE);
-      }
-    #endif
-  }
-  #if defined(CW_TONE)            // CW TONE
-    if(digitalRead(FSKDET)==LOW){
-        tone(TONE, CW_TONE);
-    }else{
-      if(tmp < 130 || tmp > 210){  // if button 2 ON run tone from button
-        noTone(TONE);
-      }
-    }
-  #endif
 }
 
 // TONE
@@ -2373,10 +2395,15 @@ void FSKmemoryTX(int memory){
   fig1 = 1;                         // every shift to start message 
   lcd.setCursor(positionCounter+1, 0);
   #if defined(AFSK_ENABLE)
-  tone(TONE, MARK);
-  #endif 
-  digitalWrite(PTT1, HIGH);          // PTT ON
-  delay(PTTlead);                   // PTT lead delay
+    tone(TONE, MARK);
+  #endif
+  if(ptt_interlock_active == 0){  // if interlock not active
+    #if defined(ETHERNET_MODULE)
+      MqttPub("ptt", 0, 1);
+    #endif
+    digitalWrite(PTT1, HIGH);          // PTT ON
+    delay(PTTlead);                   // PTT lead delay
+  }
   tmp = FSKmemory[memory].length();
   for (i = 0; i < tmp; i++) {
     positionCounter++;
@@ -2431,6 +2458,9 @@ void FSKmemoryTX(int memory){
   }
   delay(PTTtail);
   digitalWrite(PTT1, LOW);
+  #if defined(ETHERNET_MODULE)
+    MqttPub("ptt", 0, 0);
+  #endif
   #if defined(SERIAL_FSK_TX_ECHO)
       Serial.println();
   #endif
@@ -2447,9 +2477,14 @@ void Serial2FSK(){
         lcd.setCursor(positionCounter, 0);
         #if defined(AFSK_ENABLE)
           tone(TONE, MARK);
-        #endif 
-        digitalWrite(PTT1, HIGH);          // PTT ON
-        delay(PTTlead);                   // PTT lead delay
+        #endif
+        if(ptt_interlock_active == 0){  // if interlock not active
+          #if defined(ETHERNET_MODULE)
+            MqttPub("ptt", 0, 1);
+          #endif
+          digitalWrite(PTT1, HIGH);          // PTT ON
+          delay(PTTlead);                   // PTT lead delay
+        }
         // ch = ' '; Serial.print(ch); chTable(); sendFsk();   // Space before sending
         while (Serial.available()) {
             positionCounter++;
@@ -2505,6 +2540,9 @@ void Serial2FSK(){
         // ch = ' '; Serial.print(ch); chTable(); sendFsk();   // Space after sending
         delay(PTTtail);
         digitalWrite(PTT1, LOW);
+        #if defined(ETHERNET_MODULE)
+          MqttPub("ptt", 0, 0);
+        #endif
         #if defined(SERIAL_FSK_TX_ECHO)
             Serial.println();
         #endif
@@ -6203,6 +6241,9 @@ void ptt_key()
   if (ptt_line_activated == 0) {   // if PTT is currently deactivated, bring it up and insert PTT lead time delay
     if (configuration.current_ptt_line) {
       digitalWrite (configuration.current_ptt_line, HIGH);    
+        #if defined(ETHERNET_MODULE)    //  Modified for
+          MqttPub("ptt", 0, 1);         //  Open Interface III
+        #endif                          //
       #if defined(OPTION_WINKEY_2_SUPPORT) && defined(FEATURE_WINKEY_EMULATION)
       if ((wk2_both_tx_activated) && (ptt_tx_2)) {
         digitalWrite (ptt_tx_2, HIGH);
@@ -6221,6 +6262,9 @@ void ptt_unkey()
   if (ptt_line_activated) {
     if (configuration.current_ptt_line) {
       digitalWrite (configuration.current_ptt_line, LOW);
+        #if defined(ETHERNET_MODULE)    //  Modified for
+          MqttPub("ptt", 0, 0);         //  Open Interface III
+        #endif                          //
       #if defined(OPTION_WINKEY_2_SUPPORT) && defined(FEATURE_WINKEY_EMULATION)
       if ((wk2_both_tx_activated) && (ptt_tx_2)) {
         digitalWrite (ptt_tx_2, LOW);
