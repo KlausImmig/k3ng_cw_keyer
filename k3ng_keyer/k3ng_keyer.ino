@@ -1318,12 +1318,12 @@ oi3a
 #define CW_TONE 480                  // disable = off, DTR/RTS PC keying
 #define VOLTAGE_MEASURE_ADJUST 0.3   // ofset for precise adjust voltage measure
 
-#define SEQUENCERlead 90             // SEQUENCER output lead delay ms between SEQ-->PA
-#define SEQUENCERtail 45             // SEQUENCER output tail delay ms               :                            PA-->SEQ
-#define PAlead        60             // PA output lead delay ms between              PA-->TRX                     :
-#define PAtail        30             // PA output tail delay ms                           :                 TRX-->PA
-#define PTTlead       30             // PTT (FSK) lead delay ms between                   TRX-->FSK         :
-#define PTTtail       15             // PTT (FSK) tail delay ms                                       FSK-->TRX
+#define SEQUENCERlead  0             // SEQUENCER output lead delay ms between SEQ-->PA
+#define SEQUENCERtail  0             // SEQUENCER output tail delay ms          :    :                      :     PA-->SEQ
+#define PAlead        10             // PA output lead delay ms between         :    PA-->TRX               :     :    :
+#define PAtail        30             // PA output tail delay ms                 :    :    :                 TRX-->PA   :
+#define PTTlead       30             // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
+#define PTTtail       50             // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
 
 // BAND DECODER Inputs
  #define SERBAUD2     9600     // [baud] CAT Serial port in/out baudrate
@@ -1871,9 +1871,6 @@ void OpenInterfaceIntelock(){                                 // <--------------
       ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
       if(ptt_interlock_active == 1){
         ptt_low(0);
-        ptt_low(1);
-        ptt_low(2);
-        ptt_low(3);
       }
       #if defined(ETHERNET_MODULE)
         MqttPub("interlock", 0, ptt_interlock_active);
@@ -1911,6 +1908,12 @@ void ptt_high(int PTToutput){
 void ptt_low(int PTToutput){
   delay(PTTtail);
   switch (PTToutput) {
+    case 0:{ // PTT-1
+      digitalWrite (PTT1, LOW);
+      digitalWrite (PTT2, LOW);
+      digitalWrite (PTT3, LOW);
+    break;
+    }
     case 1:{ // PTT-1
       digitalWrite (PTT1, LOW);
     break;
@@ -1996,7 +1999,7 @@ void IncomingUDP(){
   }
 }
 
-void MqttPub(String path, float value, int value2){
+void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
 #if defined(MQTT_LOGIN)
 if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
 #else
@@ -2010,6 +2013,19 @@ if (client.connect("arduinoClient")) {
       String(value2).toCharArray( mqttTX, 50 );
     }
     client.publish(mqttPath, mqttTX, true);
+  }
+}
+
+void MqttPubString(String path, String character){
+#if defined(MQTT_LOGIN)
+if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
+#else
+if (client.connect("arduinoClient")) {
+#endif
+    String path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/" + path;
+    path2.toCharArray( mqttPath, 20 );
+    character.toCharArray( mqttTX, 50 );
+    client.publish(mqttPath, mqttTX);
   }
 }
 #endif
@@ -2668,6 +2684,9 @@ void sendFsk()
 
 void chTable()
 {
+        #if defined(ETHERNET_MODULE)
+          MqttPubString("rtty", String(ch));
+        #endif
         fig2 = -1;
         if(ch == ' ')
         {
@@ -2840,6 +2859,9 @@ void fskDecoder(){
                               positionCounter=0;
                           }
                           lcd.print(chIn);                
+                          #if defined(ETHERNET_MODULE)
+                            MqttPubString("rtty", String(chIn));
+                          #endif
                 }
                 dsp = 0;
         }
