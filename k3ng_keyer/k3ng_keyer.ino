@@ -1263,30 +1263,41 @@ unsigned long automatic_sending_interruption_time = 0;
   - FSK sniffing
   - CW K3NG code
   - Band decoder BCD output
-  - input voltage out of range warning
+  - Input power voltage out of range warning
 
-Dhcp.h change from
-  int beginWithDHCP(uint8_t *, unsigned long timeout = 60000, unsigned long responseTimeout = 5000);  
-to
-  int beginWithDHCP(uint8_t *, unsigned long timeout = 6000, unsigned long responseTimeout = 5000);  
+  *** Before upload need change in Dhcp.h Ethernet2 library from ***  
+      int beginWithDHCP(uint8_t *, unsigned long timeout = 60000, unsigned long responseTimeout = 5000);  
+      to
+      int beginWithDHCP(uint8_t *, unsigned long timeout = 6000, unsigned long responseTimeout = 5000);  
 
-Changelog:
-  2017-02 MQTT support
+  Changelog:
+  ----------
+  2017-02 - Interlock input (cinch, UDP)
+          - reset UDP Interlock by press Mode
+          - MQTT pub support
+          - Three level Sequencer
+          - MqttPub rx/tx fsk ascii
+          - Two fsk memory from elbug
 
-TODO:
-- disable Ethernet, if press Mode button at startup
-- Sequencer
-- move configuration to SD card
-- use interrupt for
-    - interlock
-    - PTT232
-    - Foot PTT
-- save last MODE to eeprom?
-- two fsk mem from elbug
-- ssb ptt from elbug
-- MqttPub tx fsk/cw ascii
+  TODO:
+  -----
+  - stop playng RTTY memory
+  - show mqtt broker IP
+  - PA lead/tail in menu
+  - disable Ethernet, if press Mode button at startup
+  - http check new firmware (github)
+  - move configuration to SD card
+  - ssb ptt from elbug
+  - MqttPub tx CW ascii
+  ? use interrupt function for interlock, PTT232, Foot PTT
+  ? save last MODE to eeprom
+  
+  Known Bugs
+  ----------
+  - RTTY RX decoder not work after tx mem or change mode
 
-rev 141
+---------------------------------------------------------------------------------------------------------
+Serials rev 141
 Serial0 - CLI serial2fsk in keyer_settings_open_interface.h
 Serial1 - ENCODER / FootSW 
 Serial2 - CAT
@@ -1295,10 +1306,11 @@ oi3a
 ---------------------------------------------------------------------------------------------------------*/
 
 // FEATURES AND OPTIONS
+
 #define K3NG_KEYER               // enable CW keyer
 #define BAND_DECODER             // enable Band decoder
 #define FSK_TX                   // enable RTTY keying
-#define FSK_RX                   // enable RTTY decoder
+//#define FSK_RX                   // enable RTTY decoder - EXPERIMENTAL!
 #define ETHERNET_MODULE          // enable ETHERNET module (must be installed) EXPERIMENTAL
 #define MQTT_PATH "oi3"          // Identificator your device in MQTT
 #define MQTT_PORT 1883           // MQTT broker PORT
@@ -1306,12 +1318,12 @@ oi3a
 #define MQTT_USER "hra"          // MQTT broker user login
 #define MQTT_PASS ""             // MQTT broker password
 #define UDP_RTTY_PORT    89      // UDP port listen to RTTY character (FSK mode)
-#define UDP_COMMAND_PORT 88      // UDP port listen to command
+#define UDP_COMMAND_PORT 88      // UDP port listen to command EXPERIMENTAL!
                                  // m:#;   - Mode # 0-5
                                  // i:#;   - INTERLOCK # 0/1 (on/off)
                                  // p:#:%; - PTT # 0/1 (on/off), % 0-3 (0=PTTPA, 1=PTT1, 2=PTT2, 3=PTT3) 
 #define YOUR_CALL "ol7m"
-#define MODE_AFTER_POWER_UP 4        // MODE after start up
+#define MODE_AFTER_POWER_UP 3        // MODE after start up
 #define MENU_AFTER_POWER_UP 7        // MENU after start up
 #define PCB_REV_3_141                // revision of PCB
 #define BUTTON_BEEP                  // Mode button beep enable
@@ -1324,7 +1336,11 @@ oi3a
 #define PAtail        30             // PA output tail delay ms                 :    :    :                 TRX-->PA   :
 #define PTTlead       30             // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
 #define PTTtail       50             // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
-
+                                     /*                                            ^    ^    ^            ^    ^     ^
+                                                               SEQUENCERlead ______|    |    |            |    |     |_____ SEQUENCERtail
+                                                                      PAlead ___________|    |            |    |___________ PAtail
+                                                                     PTTlead ________________|            |________________ PTTtail
+                                      */                               
 // BAND DECODER Inputs
  #define SERBAUD2     9600     // [baud] CAT Serial port in/out baudrate
  #define ICOM_CIV              // read frequency from CIV (icom_civ.h) ** you must enabled 'CI-V transceive' in TRX settings **
@@ -1350,7 +1366,7 @@ oi3a
  #define CIV_ADRESS   0x56       // CIV input HEX Icom adress (0x is prefix)
 // #define CIV_ADR_OUT  0x56     // CIV output HEX Icom adress (0x is prefix)
 
-char* ANTname[17] = {            // Band decoder (BCD output) antennas name on LCD
+char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON LCD MENU
     "-",
     "Dipole",     // Band 1
     "Vertical",   // Band 2
@@ -1382,13 +1398,13 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas name on L
   IPAddress gateway(192, 168, 1, 200);    // GATE
   IPAddress subnet(255, 255, 255, 0);     // MASK
   IPAddress myDns(8, 8, 8, 8);            // DNS (google pub)
-//  IPAddress server(192, 168, 1, 200);       // MQTT broker IP address
-  IPAddress server(37, 187, 106, 16);       // test.mosquitto.org MQTT broker
+  IPAddress server(192, 168, 1, 200);       // MQTT broker IP address
+//  IPAddress server(37, 187, 106, 16);       // test.mosquitto.org MQTT broker
   EthernetClient ethClient;
   PubSubClient client(ethClient);
 //  PubSubClient client(server, 1883, callback, ethClient);
-  unsigned int UdpCommandPort = 88; // local UDP port to listen on
-  unsigned int UdpRttyPort = 89;       // local UDP port to listen on
+  unsigned int UdpCommandPort = 88;       // local UDP port to listen on
+  unsigned int UdpRttyPort = 89;          // local UDP port to listen on
   char packetBuffer[UDP_TX_PACKET_MAX_SIZE]; //buffer to hold incoming packet,
   int UDPpacketSize;
   char mqttTX[50];
@@ -1399,7 +1415,7 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas name on L
 
 // Serial2FSK (FSK TX)
 #define SERBAUD0  115200         // Serial0 in/out baudrate (seria2fsk, )
-//#define AFSK_ENABLE            // AFSK AUDIO (serial2fsk, fsk memory)
+#define AFSK_ENABLE            // AFSK AUDIO (serial2fsk, fsk memory)
 //#define SERIAL_FSK_TX_ECHO     // enable TX echo on serial port
 //#define SHOW_HIDDEN_FSK_CHAR   // show invisible TX characters on LCD
 #define MARK     1445            // AFSK mark 1445 / 2295 Hz
@@ -1533,6 +1549,8 @@ int Loop[3] = {MODE_AFTER_POWER_UP, MENU_AFTER_POWER_UP, MENU_AFTER_POWER_UP};  
 byte EncPrev=1;
 byte microSD[8] = {0b00000, 0b01111, 0b01001, 0b11111, 0b01111, 0b11111, 0b11111, 0b00000};
 byte Eth[8] = {0b00000, 0b00000, 0b11111, 0b10001, 0b10001, 0b11011, 0b11111, 0b00000};
+//byte InterlockChar[8] = {0b11111, 0b10001, 0b11011, 0b11011, 0b11011, 0b10001, 0b11111, 0b00000};
+byte InterlockChar[8] = {0b00100, 0b01010, 0b01010, 0b11111, 0b11011, 0b11011, 0b11111, 0b00000};
 char* modeLCD[6][2]= {
     {"|CWK", "CW keyer  "},
     {">CWD", "PC DTR/RTS"},
@@ -1553,7 +1571,7 @@ char* MenuTree[15]= { // [radky][sloupce]
   "Freq",            //  7
   "BAND",            //  8
   "ANT",             //  9
-  "FSKBd",          // 10
+  "FSKBd",           // 10
   "FSKlead",         // 11
   "FSKtail",         // 12
   "",                // 13  MODE fullname
@@ -1562,7 +1580,7 @@ char* MenuTree[15]= { // [radky][sloupce]
 #define MenuTreeSize (sizeof(MenuTree)/sizeof(char *)) //array size  
 int CulumnPositionEnd;
 
-byte StatusArray[9] = {
+byte StatusArray[10] = {
   HIGH,   // MODE lastbuttonstate
   HIGH,   // MODE debounced signal
   LOW,    // LOW-MODE | HIGH MENU
@@ -1572,6 +1590,7 @@ byte StatusArray[9] = {
   LOW,    // PTT1 active
   LOW,    // PTT2 active
   LOW,    // PTT3 active
+  LOW,    // Interlock active from UDP
 };
 //byte ptt_interlock_active = 0;  // define in K3NG code
 
@@ -1771,7 +1790,7 @@ void setup()
 
   // other
   lcd.createChar(4, microSD);
-  lcd.createChar(5, Eth);
+  lcd.createChar(5, InterlockChar);
   lcd.begin(16, 2);
   lcd.setCursor(2, 1);
 //            lcd.print((char)188);
@@ -1844,6 +1863,9 @@ if (client.connect("arduinoClient")) {
       String(PAtail).toCharArray( mqttTX, 50 );                          // to array
         client.publish(mqttPath, mqttTX, true);
 
+
+// CAT TRX + baud
+
     }
   #endif
 
@@ -1867,8 +1889,10 @@ void loop() {
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
 void OpenInterfaceIntelock(){                                 // <-------------- move to INTERRUPT?
-  if ((digitalRead(INTERLOCK)^1) != ptt_interlock_active) {   // if change
+//  if ((digitalRead(INTERLOCK)^1) != ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
+    if (digitalRead(INTERLOCK) == ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
       ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
+//      Serial.println(ptt_interlock_active, BIN);
       if(ptt_interlock_active == 1){
         ptt_low(0);
       }
@@ -1939,6 +1963,7 @@ void ptt_low(int PTToutput){
 #if defined(ETHERNET_MODULE)
 // Incoming UDP commands
 void IncomingUDP(){
+
   // RTTY transmit incoming string
   UDPpacketSize = UdpRtty.parsePacket();    // if there's data available, read a packet
   if (UDPpacketSize){
@@ -1958,12 +1983,19 @@ void IncomingUDP(){
     
     // INTERLOCK
     if (packetBuffer[0] == 'i' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
-      ptt_interlock_active = packetBuffer[2]-'0';  // convert to int for compare
+      if(packetBuffer[2] == '1'){
+        ptt_interlock_active = B00001;
+        ptt_low(0);
+        StatusArray[9] = HIGH;
+      }else if(packetBuffer[2] == '0'){
+        ptt_interlock_active = B00000;
+        StatusArray[9] = LOW;
+      }
       #if defined(ETHERNET_MODULE)
         MqttPub("interlock", 0, ptt_interlock_active);
       #endif
     }
-    
+
     // PTT
     if (packetBuffer[0] == 'p' && packetBuffer[1] == ':' && packetBuffer[3] == ':' && packetBuffer[5] == ';'){
       if(packetBuffer[4] == '0'){tmp = PTTPA;}
@@ -1985,7 +2017,7 @@ void IncomingUDP(){
           #endif
       }
     }
-    
+
     // MODE
     if (packetBuffer[0] == 'm' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
       tmp = packetBuffer[2]-'0';  // convert to int for compare
@@ -2053,10 +2085,14 @@ void OpenInterfaceLCD(){    // LCD
     if (millis() - Timeout[0][0] > (Timeout[0][1])){
       // micro SD
       lcd.setCursor(15, 1);
-      if(analogRead(SDPLUG)<128){
-        lcd.write(byte(4));               // microSD
-      } else {
-        lcd.print(" ");        
+      if(ptt_interlock_active == 1){
+          lcd.write(byte(5));               // Interlock icon        
+      }else{
+        if(analogRead(SDPLUG)<128){
+          lcd.write(byte(4));               // microSD
+        } else {
+          lcd.print(" ");        
+        }
       }
       
       // MENU
@@ -2268,48 +2304,55 @@ void OpenInterfaceMENU(){
           StatusArray[1] = HIGH;                             // flip-flop
           if((millis() - Timeout[6][0]) < Timeout[6][1]){    // short detect
             if(StatusArray[2] == LOW){                       // if MENU disable, MODE active
-              Loop[0]++;
-              if(Loop[0]==6){
-                Loop[0]=0;
-              }
-              #if defined(ETHERNET_MODULE)
-                MqttPub("mode", 0, Loop[0]);
-              #endif              
-              switch (Loop[0]) {
-                case 0:{ // CW Keyer
-                    digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
-                    digitalWrite (AFSK, LOW);
-                    break;
+              if (ptt_interlock_active == 1 && StatusArray[9] == HIGH) {   // if UDP Interlock ON
+                ptt_interlock_active = B00000;                            // manual UDP interlock OFF
+                #if defined(ETHERNET_MODULE)
+                  MqttPub("interlock", 0, ptt_interlock_active);
+                #endif
+              }else{
+                Loop[0]++;
+                if(Loop[0]==6){
+                  Loop[0]=0;
                 }
-                case 1:{ // CW PC
-                    digitalWrite (WINKEY, LOW);
-                    digitalWrite (AFSK, LOW);
-                    break;
-                }
-                case 2:{ // SSB
-                    digitalWrite (WINKEY, LOW);
-                    digitalWrite (AFSK, LOW);      
-                    break;
-                }
-                case 3:{ // FSK PC
-                    digitalWrite (WINKEY, LOW);
-                    digitalWrite (AFSK, LOW);
-                    break;
-                }
-                case 4:{ // FSK ASCII
-                    Serial.begin(SERBAUD0);
-                    digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
-                    digitalWrite (AFSK, LOW);
-                    Serial.flush();  // clear buffer before switch to serial2FSK
-                    break;
-                }
-                case 5:{ // DIGITAL (AFSK)
-                    Serial.begin(PRIMARY_SERIAL_PORT_BAUD);
-                    digitalWrite (WINKEY, LOW);
-                    digitalWrite (AFSK, HIGH);
-                    break;
-                }           
-              }  // endswitch
+                #if defined(ETHERNET_MODULE)
+                  MqttPub("mode", 0, Loop[0]);
+                #endif              
+                switch (Loop[0]) {
+                  case 0:{ // CW Keyer
+                      digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
+                      digitalWrite (AFSK, LOW);
+                      break;
+                  }
+                  case 1:{ // CW PC
+                      digitalWrite (WINKEY, LOW);
+                      digitalWrite (AFSK, LOW);
+                      break;
+                  }
+                  case 2:{ // SSB
+                      digitalWrite (WINKEY, LOW);
+                      digitalWrite (AFSK, LOW);      
+                      break;
+                  }
+                  case 3:{ // FSK PC
+                      digitalWrite (WINKEY, LOW);
+                      digitalWrite (AFSK, LOW);
+                      break;
+                  }
+                  case 4:{ // FSK ASCII
+                      Serial.begin(SERBAUD0);
+                      digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
+                      digitalWrite (AFSK, LOW);
+                      Serial.flush();  // clear buffer before switch to serial2FSK
+                      break;
+                  }
+                  case 5:{ // DIGITAL (AFSK)
+                      Serial.begin(PRIMARY_SERIAL_PORT_BAUD);
+                      digitalWrite (WINKEY, LOW);
+                      digitalWrite (AFSK, HIGH);
+                      break;
+                  }           
+                }  // endswitch
+              } // end if UDP Interlock ON
             }else{ // menu enable
               Loop[1]++;
               if(Loop[1] > MenuTreeSize-1){
