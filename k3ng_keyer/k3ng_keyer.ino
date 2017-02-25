@@ -1273,17 +1273,17 @@ unsigned long automatic_sending_interruption_time = 0;
   Changelog:
   ----------
   2017-02 - Interlock input (cinch, UDP)
-          - reset UDP Interlock by press Mode
+          - Stop UDP Interlock by press Mode button
           - MQTT pub support
           - Three level Sequencer
           - MqttPub rx/tx fsk ascii
           - Two fsk memory from elbug
+          - Show Sequencer-PA-PTT lead/tail in menu
 
   TODO:
   -----
   - stop playng RTTY memory
   - show mqtt broker IP
-  - PA lead/tail in menu
   - disable Ethernet, if press Mode button at startup
   - http check new firmware (github)
   - move configuration to SD card
@@ -1308,13 +1308,13 @@ oi3a
 // FEATURES AND OPTIONS
 
 #define K3NG_KEYER               // enable CW keyer
-#define BAND_DECODER             // enable Band decoder
+//#define BAND_DECODER             // enable Band decoder
 #define FSK_TX                   // enable RTTY keying
-//#define FSK_RX                   // enable RTTY decoder - EXPERIMENTAL!
+#define FSK_RX                   // enable RTTY decoder - EXPERIMENTAL!
 #define ETHERNET_MODULE          // enable ETHERNET module (must be installed) EXPERIMENTAL
 #define MQTT_PATH "oi3"          // Identificator your device in MQTT
 #define MQTT_PORT 1883           // MQTT broker PORT
-//#define MQTT_LOGIN               // enable MQTT broker login
+#define MQTT_LOGIN               // enable MQTT broker login
 #define MQTT_USER "hra"          // MQTT broker user login
 #define MQTT_PASS ""             // MQTT broker password
 #define UDP_RTTY_PORT    89      // UDP port listen to RTTY character (FSK mode)
@@ -1323,7 +1323,7 @@ oi3a
                                  // i:#;   - INTERLOCK # 0/1 (on/off)
                                  // p:#:%; - PTT # 0/1 (on/off), % 0-3 (0=PTTPA, 1=PTT1, 2=PTT2, 3=PTT3) 
 #define YOUR_CALL "ol7m"
-#define MODE_AFTER_POWER_UP 3        // MODE after start up
+#define MODE_AFTER_POWER_UP 0        // MODE after start up
 #define MENU_AFTER_POWER_UP 7        // MENU after start up
 #define PCB_REV_3_141                // revision of PCB
 #define BUTTON_BEEP                  // Mode button beep enable
@@ -1398,8 +1398,8 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON L
   IPAddress gateway(192, 168, 1, 200);    // GATE
   IPAddress subnet(255, 255, 255, 0);     // MASK
   IPAddress myDns(8, 8, 8, 8);            // DNS (google pub)
-  IPAddress server(192, 168, 1, 200);       // MQTT broker IP address
-//  IPAddress server(37, 187, 106, 16);       // test.mosquitto.org MQTT broker
+//  IPAddress server(192, 168, 1, 200);       // MQTT broker IP address
+  IPAddress server(37, 187, 106, 16);       // test.mosquitto.org MQTT broker
   EthernetClient ethClient;
   PubSubClient client(ethClient);
 //  PubSubClient client(server, 1883, callback, ethClient);
@@ -1414,8 +1414,8 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON L
 #endif
 
 // Serial2FSK (FSK TX)
-#define SERBAUD0  115200         // Serial0 in/out baudrate (seria2fsk, )
-#define AFSK_ENABLE            // AFSK AUDIO (serial2fsk, fsk memory)
+#define SERBAUD0  1200           // Serial0 in/out baudrate (seria2fsk), if set 1200 may be controled as winkey
+#define AFSK_ENABLE              // AFSK AUDIO (serial2fsk, fsk memory)
 //#define SERIAL_FSK_TX_ECHO     // enable TX echo on serial port
 //#define SHOW_HIDDEN_FSK_CHAR   // show invisible TX characters on LCD
 #define MARK     1445            // AFSK mark 1445 / 2295 Hz
@@ -1560,7 +1560,7 @@ char* modeLCD[6][2]= {
     {"|DIG", "Data  AFSK"},
 };
 
-char* MenuTree[15]= { // [radky][sloupce]
+char* MenuTree[19]= { // [radky][sloupce]
   YOUR_CALL,         //  0 call
   "PCB 3.141",       //  1
   "DCin",            //  2
@@ -1572,10 +1572,14 @@ char* MenuTree[15]= { // [radky][sloupce]
   "BAND",            //  8
   "ANT",             //  9
   "FSKBd",           // 10
-  "FSKlead",         // 11
-  "FSKtail",         // 12
-  "",                // 13  MODE fullname
-  "",                // 14  IP switch
+  "SEQlead",         // 11
+  "SEQtail",         // 12
+  "PAlead",          // 13
+  "PAtail",          // 14
+  "PTTlead",         // 15
+  "PTTtail",         // 16
+  "",                // 17  MODE fullname
+  "",                // 18  IP switch
 };
 #define MenuTreeSize (sizeof(MenuTree)/sizeof(char *)) //array size  
 int CulumnPositionEnd;
@@ -1888,18 +1892,20 @@ void loop() {
 }    // end loop
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
-void OpenInterfaceIntelock(){                                 // <-------------- move to INTERRUPT?
-//  if ((digitalRead(INTERLOCK)^1) != ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
-    if (digitalRead(INTERLOCK) == ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
-      ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
-//      Serial.println(ptt_interlock_active, BIN);
-      if(ptt_interlock_active == 1){
-        ptt_low(0);
-      }
-      #if defined(ETHERNET_MODULE)
-        MqttPub("interlock", 0, ptt_interlock_active);
-      #endif
-  }
+void OpenInterfaceIntelock(){      // <-------------- move to INTERRUPT?
+//  if(Loop[0] > 1) {                // CWK and CWD not active
+  //  if ((digitalRead(INTERLOCK)^1) != ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
+      if (digitalRead(INTERLOCK) == ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
+        ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
+  //      Serial.println(ptt_interlock_active, BIN);
+        if(ptt_interlock_active == 1){
+          ptt_low(0);
+        }
+        #if defined(ETHERNET_MODULE)
+          MqttPub("interlock", 0, ptt_interlock_active);
+        #endif
+    }
+//  }
 }
 
 void ptt_high(int PTToutput){
@@ -2089,7 +2095,7 @@ void OpenInterfaceLCD(){    // LCD
           lcd.write(byte(5));               // Interlock icon        
       }else{
         if(analogRead(SDPLUG)<128){
-          lcd.write(byte(4));               // microSD
+          lcd.write(byte(4));               // microSD icon
         } else {
           lcd.print(" ");        
         }
@@ -2247,19 +2253,43 @@ void MenuToLCD(int nr){
       CulumnPosition=CulumnPosition+5;
     break;
     }
-    case 11:{ // PTT Lead
+    case 11:{ // SEQ Lead
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(SEQUENCERlead);
+      CulumnPosition=CulumnPosition+String(SEQUENCERlead).length();
+    break;
+    }
+    case 12:{ // SEQ tail
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(SEQUENCERtail);
+      CulumnPosition=CulumnPosition+String(SEQUENCERtail).length();
+    break;
+    }
+    case 13:{ // PA Lead
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(PAlead);
+      CulumnPosition=CulumnPosition+String(PAlead).length();
+    break;
+    }
+    case 14:{ // PA tail
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(PAtail);
+      CulumnPosition=CulumnPosition+String(PAtail).length();
+    break;
+    }
+    case 15:{ // PTT Lead
       lcd.setCursor(CulumnPosition, 1);
       lcd.print(PTTlead);
       CulumnPosition=CulumnPosition+String(PTTlead).length();
     break;
     }
-    case 12:{ // PTT tail
+    case 16:{ // PTT tail
       lcd.setCursor(CulumnPosition, 1);
       lcd.print(PTTtail);
       CulumnPosition=CulumnPosition+String(PTTtail).length();
     break;
     }
-    case 13:{ // MODE
+    case 17:{ // MODE
       lcd.setCursor(CulumnPosition-1, 1);
       lcd.print(modeLCD[Loop[0]][1]);
       CulumnPosition=CulumnPosition+String(modeLCD[Loop[0]][1]).length()-1;
@@ -3520,7 +3550,7 @@ void K3NG_key()                                                      // <-------
     #endif //FEATURE_SLEEP
 
     #ifdef FEATURE_PTT_INTERLOCK
-      service_ptt_interlock();
+//      service_ptt_interlock();          // DISABLE for Open Interface III
     #endif //FEATURE_PTT_INTERLOCK
     
     #ifdef FEATURE_PADDLE_ECHO
@@ -16192,10 +16222,16 @@ void service_ptt_interlock(){
         lcd_center_print_timed("PTT Interlock",0,2000);
         #endif //FEATURE_DISPLAY
       }
+      #if defined(ETHERNET_MODULE)
+        MqttPub("interlock", 0, ptt_interlock_active);    // add for Open Interface III
+      #endif
     } else {
       if (ptt_interlock_active){
         ptt_interlock_active = 0;
       }
+      #if defined(ETHERNET_MODULE)
+        MqttPub("interlock", 0, ptt_interlock_active);    // add for Open Interface III
+      #endif
     }
     last_ptt_interlock_check = millis();
   }

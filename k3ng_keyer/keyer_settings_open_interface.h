@@ -135,7 +135,7 @@
 
 
 #define PRIMARY_SERIAL_PORT &Serial
-#define PRIMARY_SERIAL_PORT_BAUD 115200     // This applies only when the port is in Command Line Interface mode.  In Winkey mode it will default to 1200.
+#define PRIMARY_SERIAL_PORT_BAUD 1200     // This applies only when the port is in Command Line Interface mode.  In Winkey mode it will default to 1200.
 
 #ifdef FEATURE_COMMAND_LINE_INTERFACE_ON_SECONDARY_PORT
   #define SECONDARY_SERIAL_PORT &Serial1
