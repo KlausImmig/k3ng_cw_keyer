@@ -28,9 +28,15 @@
 
 
 //lcd pins
-#ifdef FEATURE_LCD_4BIT
-  #define lcd_rs A2
+#if defined(PCB_REV_3_1415) && defined(FEATURE_LCD_4BIT)
+  #define lcd_enable 37
+#endif
+#if defined(PCB_REV_3_141) && defined(FEATURE_LCD_4BIT)
   #define lcd_enable 3
+#endif
+#ifdef FEATURE_LCD_4BIT
+  #define lcd_enable 37
+  #define lcd_rs A2
   #define lcd_d4 6
   #define lcd_d5 7
   #define lcd_d6 8
@@ -80,7 +86,7 @@
 #endif //FEATURE_STRAIGHT_KEY
 
 #ifdef FEATURE_CW_DECODER
-  #define cw_decoder_pin A3//A11 //A5 //A3  
+  #define cw_decoder_pin A3//A11 //A5 //A3
   #ifdef OPTION_CW_DECODER_GOERTZEL_AUDIO_DETECTOR
     #define cw_decoder_audio_input_pin 0 // this must be an analog pin!
   #endif //OPTION_CW_DECODER_GOERTZEL_AUDIO_DETECTOR
@@ -105,4 +111,3 @@
   #error "Multiple pin_settings.h files included somehow..."
 
 #endif //keyer_pin_settings_h
-
