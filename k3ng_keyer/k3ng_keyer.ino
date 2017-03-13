@@ -1294,6 +1294,7 @@ unsigned long automatic_sending_interruption_time = 0;
 
   Known Bugs
   ----------
+  - Sequencer/PTT lead-tail time bad implement to CW keyer 'ptt_high() ptt_low()'
   - RTTY RX decoder not work after tx mem or change mode
 
 ---------------------------------------------------------------------------------------------------------
@@ -1332,10 +1333,10 @@ oi3a
 
 #define SEQUENCERlead  0             // SEQUENCER output lead delay ms between SEQ-->PA
 #define SEQUENCERtail  0             // SEQUENCER output tail delay ms          :    :                      :     PA-->SEQ
-#define PAlead        10             // PA output lead delay ms between         :    PA-->TRX               :     :    :
-#define PAtail        30             // PA output tail delay ms                 :    :    :                 TRX-->PA   :
-#define PTTlead       30             // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
-#define PTTtail       50             // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
+#define PAlead         0             // PA output lead delay ms between         :    PA-->TRX               :     :    :
+#define PAtail         0             // PA output tail delay ms                 :    :    :                 TRX-->PA   :
+#define PTTlead        0             // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
+#define PTTtail        0             // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
                                      /*                                            ^    ^    ^            ^    ^     ^
                                                                SEQUENCERlead ______|    |    |            |    |     |_____ SEQUENCERtail
                                                                       PAlead ___________|    |            |    |___________ PAtail
