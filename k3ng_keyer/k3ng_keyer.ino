@@ -1,12 +1,5 @@
 /*
 
-<<<<<<< HEAD:open_interface_iii_k3ng_keyer/open_interface_iii_k3ng_keyer.ino
- *** Modified for Open Interface III hardware by RemoteQTH.com
- *** Included code between line nr 1199-11563, 1599-3057 and 3106-3110.
-=======
-Modified for RemoteQTH.com Open Interface III.
->>>>>>> 24dfd6d9f57084edb9b4a50d04f94da43ea93d32:k3ng_keyer/k3ng_keyer.ino
-
  K3NG Arduino CW Keyer
 
  Copyright 1340 BC, 2010, 2011, 2012, 2013, 2014, 2015, 2016 Anthony Good, K3NG
@@ -746,7 +739,7 @@ Recent Update History
 
 //#if defined(FEATURE_ETHERNET)
 #if !defined(ARDUINO_MAPLE_MINI)
-//  #include <Ethernet.h>               // if this is not included, compilation fails even though all ethernet code is #ifdef'ed out    // disable, but Open Interface III use Ethernet2 libraty
+//  #include <Ethernet.h>               // if this is not included, compilation fails even though all ethernet code is #ifdef'ed out    // disable, but #OI3 use Ethernet2 library
   #if defined(FEATURE_INTERNET_LINK)
     #include <EthernetUdp.h>
   #endif //FEATURE_INTERNET_LINK
@@ -1202,11 +1195,11 @@ unsigned long automatic_sending_interruption_time = 0;
 
 /*---------------------------------------------------------------------------------------------------------
 
-  Open Interface III
+  Open Interface III (#OI3)
   ----------------------
   https://remoteqth.com/open-interface.php
   by OK1HRA with RTTY code from JI3BNB
-  rev 3,141
+  rev 3,1415
 
    ___               _        ___ _____ _  _
   | _ \___ _ __  ___| |_ ___ / _ \_   _| || |  __ ___ _ __
@@ -1272,6 +1265,8 @@ unsigned long automatic_sending_interruption_time = 0;
 
   Changelog:
   ----------
+  2017-03 - All modified line in original code signed with #OI3
+          - Fix Sequencer
   2017-02 - Interlock input (cinch, UDP)
           - Stop UDP Interlock by press Mode button
           - MQTT pub support
@@ -1294,28 +1289,20 @@ unsigned long automatic_sending_interruption_time = 0;
 
   Known Bugs
   ----------
-  - Sequencer/PTT lead-tail time bad implement to CW keyer 'ptt_high() ptt_low()'
   - RTTY RX decoder not work after tx mem or change mode
 
----------------------------------------------------------------------------------------------------------
-Serials rev 141
-Serial0 - CLI serial2fsk in keyer_settings_open_interface.h
-Serial1 - ENCODER / FootSW
-Serial2 - CAT
-Serial3 - ACC (CAT OUT)
-oi3a
 ---------------------------------------------------------------------------------------------------------*/
 
 // FEATURES AND OPTIONS
 
 #define K3NG_KEYER               // enable CW keyer
-#define BAND_DECODER             // enable Band decoder
+// #define BAND_DECODER             // enable Band decoder
 #define FSK_TX                   // enable RTTY keying
-#define FSK_RX                   // enable RTTY decoder - EXPERIMENTAL!
-//#define ETHERNET_MODULE          // enable ETHERNET module (must be installed) EXPERIMENTAL
+// #define FSK_RX                   // enable RTTY decoder - EXPERIMENTAL!
+// #define ETHERNET_MODULE          // enable ETHERNET module (must be installed) EXPERIMENTAL
 #define MQTT_PATH "oi3"          // Identificator your device in MQTT
 #define MQTT_PORT 1883           // MQTT broker PORT
-//#define MQTT_LOGIN               // enable MQTT broker login
+// #define MQTT_LOGIN               // enable MQTT broker login
 #define MQTT_USER "hra"          // MQTT broker user login
 #define MQTT_PASS ""             // MQTT broker password
 #define UDP_RTTY_PORT    89      // UDP port listen to RTTY character (FSK mode)
@@ -1324,23 +1311,23 @@ oi3a
                                  // i:#;   - INTERLOCK # 0/1 (on/off)
                                  // p:#:%; - PTT # 0/1 (on/off), % 0-3 (0=PTTPA, 1=PTT1, 2=PTT2, 3=PTT3)
 #define YOUR_CALL "Call"
-#define MODE_AFTER_POWER_UP 4        // MODE after start up
-#define MENU_AFTER_POWER_UP 7        // MENU after start up
+#define MODE_AFTER_POWER_UP 0        // MODE after start up
+#define MENU_AFTER_POWER_UP 2        // MENU after start up
 #define PCB_REV_3_1415                // revision of PCB
 #define BUTTON_BEEP                  // Mode button beep enable
 #define CW_TONE 480                  // disable = off, DTR/RTS PC keying
 #define VOLTAGE_MEASURE_ADJUST 0.3   // ofset for precise adjust voltage measure
 
 #define SEQUENCERlead  0             // SEQUENCER output lead delay ms between SEQ-->PA
-#define SEQUENCERtail  0             // SEQUENCER output tail delay ms          :    :                      :     PA-->SEQ
-#define PAlead         0             // PA output lead delay ms between         :    PA-->TRX               :     :    :
-#define PAtail         0             // PA output tail delay ms                 :    :    :                 TRX-->PA   :
-#define PTTlead        0             // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
-#define PTTtail        0             // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
-                                     /*                                            ^    ^    ^            ^    ^     ^
-                                                               SEQUENCERlead ______|    |    |            |    |     |_____ SEQUENCERtail
-                                                                      PAlead ___________|    |            |    |___________ PAtail
-                                                                     PTTlead ________________|            |________________ PTTtail
+#define SEQUENCERtail  200           // SEQUENCER output tail delay ms          :    :                      :     PA-->SEQ
+#define PAlead         10            // PA output lead delay ms between         :    PA-->TRX               :     :    :
+#define PAtail         200           // PA output tail delay ms                 :    :    :                 TRX-->PA   :
+#define PTTlead        10            // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
+#define PTTtail        350           // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
+/*                     |                                                        ^    ^    ^            ^    ^     ^
+                    Master                                  SEQUENCERlead ______|    |    |            |    |     |_____ SEQUENCERtail
+                    for CW                                         PAlead ___________|    |            |    |___________ PAtail
+                   tail delay                                     PTTlead ________________|            |________________ PTTtail
                                       */
 // BAND DECODER Inputs
  #define SERBAUD2     9600     // [baud] CAT Serial port in/out baudrate
@@ -1362,7 +1349,7 @@ oi3a
 // #define SERIAL_echo           // Feedback on serial line in same baudrate, CVS format <[band],[freq]>\n
 
 // BAND DECODER Settings
- #define WATCHDOG                // determines the time, after which the BCD output switch to OFF and Frequency to 0 - uncomment for the enabled <------------------- nefunguje v request modu
+ #define WATCHDOG                // determines the time, after which the BCD output switch to OFF and Frequency to 0 - uncomment for the enabled (nefunguje v request modu)
  #define REQUEST                 // use TXD output for sending frequency request, if not detect frequency in sniff mode (Kenwood PC, Yaesu CAT, Yaesu CAT old, Icom CIV)
  #define CIV_ADRESS   0x56       // CIV input HEX Icom adress (0x is prefix)
 // #define CIV_ADR_OUT  0x56     // CIV output HEX Icom adress (0x is prefix)
@@ -1445,7 +1432,22 @@ long Timeout[8][2] = { // [lines][rows]
     {0, 500},          // MODE button long [6][0-timer/1-long]
     {0, 1000},         // DCin voltage measure [7][0-timer/1-long]
 };
+long PTT_tail_timeout[5][2] = { // [lines][rows]
+    {0, PTTtail},          // PTT 1
+    {0, PTTtail},          // PTT 2
+    {0, PTTtail},          // PTT 3
+    {0, PAtail},           // PA
+    {0, SEQUENCERtail},    // Sequencer
+};
+byte SequencerLevel = 0;   // 0 = off, 1-2-3 = PTT1-2-3, 4 = PA, 5 = SEQ
 
+/*                          0   _________________________   0
+                          _____|                         |_____   Sequencer
+                                  5  _______________   5
+                          __________|               |__________   PTT-PA
+                                       4  _____   4
+                          _______________| 321 |_______________   PTT-1-2-3
+*/
 //---------------------------------------------------------------------------------------------------------
 
 // PIN SETTINGS
@@ -1585,7 +1587,7 @@ char* MenuTree[19]= { // [radky][sloupce]
 #define MenuTreeSize (sizeof(MenuTree)/sizeof(char *)) //array size
 int CulumnPositionEnd;
 
-byte StatusArray[10] = {
+byte StatusArray[11] = {
   HIGH,   // MODE lastbuttonstate
   HIGH,   // MODE debounced signal
   LOW,    // LOW-MODE | HIGH MENU
@@ -1689,8 +1691,7 @@ long freq = 0;
                         */ { 0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1 }, /* --> BCD4
     */};
 #endif
-
-// Open Interface III variables END
+// #OI3 variables END
 
 /*---------------------------------------------------------------------------------------------------------
 
@@ -1725,10 +1726,8 @@ void setup()
   initialize_debug_startup();
 
 
-
 //---------------------------------------------------------------------------------------------------------
-
-  // Open Interface III SETUP
+  // #OI3 SETUP
   // Menu
   pinMode(DCIN, INPUT);
   pinMode(DC3V, INPUT);
@@ -1890,15 +1889,15 @@ void loop() {
     #if defined(ETHERNET_MODULE)
       IncomingUDP();      // Incomming UDP command and transmit characters
     #endif
+    if(SequencerLevel != 0){ // if Sequencer on
+      check_ptt_low();
+    }
 }    // end loop
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
 void OpenInterfaceIntelock(){      // <-------------- move to INTERRUPT?
-//  if(Loop[0] > 1) {                // CWK and CWD not active
-  //  if ((digitalRead(INTERLOCK)^1) != ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
       if (digitalRead(INTERLOCK) == ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
         ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
-  //      Serial.println(ptt_interlock_active, BIN);
         if(ptt_interlock_active == 1){
           ptt_low(0);
         }
@@ -1906,65 +1905,119 @@ void OpenInterfaceIntelock(){      // <-------------- move to INTERRUPT?
           MqttPub("interlock", 0, ptt_interlock_active);
         #endif
     }
-//  }
 }
 
 void ptt_high(int PTToutput){
-  if(ptt_interlock_active == 0){  // if interlock not active
-    digitalWrite (SEQUENCER, HIGH);  // SEQUENCER
-    delay(SEQUENCERlead);
-    digitalWrite (PTTPA, HIGH);      // PTT-PA
-    delay(PAlead);
-    switch (PTToutput) {
-      case 1:{ // PTT-1
-        digitalWrite (PTT1, HIGH);
-      break;
-      }
-      case 2:{ // PTT-2
-        digitalWrite (PTT2, HIGH);
-      break;
-      }
-      case 3:{ // PTT-3
-        digitalWrite (PTT3, HIGH);
-      break;
-      }
+  if(ptt_interlock_active == 0){
+    if(SequencerLevel == 0){
+      digitalWrite (SEQUENCER, HIGH);  // SEQUENCER
+      delay(SEQUENCERlead);
+      SequencerLevel = 5;
     }
-    delay(PTTlead);
-    #if defined(ETHERNET_MODULE)
-      MqttPub("ptt", 0, 1);
-    #endif
+    if(SequencerLevel == 5){
+      digitalWrite (PTTPA, HIGH);      // PTT-PA
+      delay(PAlead);
+      SequencerLevel = 4;
+    }
+    if(SequencerLevel == 4){
+      switch (PTToutput) {
+        case 1:{ // PTT-1
+          digitalWrite (PTT1, HIGH);
+          SequencerLevel = 1;
+        break;
+        }
+        case 2:{ // PTT-2
+          digitalWrite (PTT2, HIGH);
+          SequencerLevel = 2;
+        break;
+        }
+        case 3:{ // PTT-3
+          digitalWrite (PTT3, HIGH);
+          SequencerLevel = 3;
+        break;
+        }
+      }
+      delay(PTTlead);
+      #if defined(ETHERNET_MODULE)
+        MqttPub("ptt", 0, 1);
+      #endif
+    }
   }
 }
 
 void ptt_low(int PTToutput){
-  delay(PTTtail);
   switch (PTToutput) {
-    case 0:{ // PTT-1
-      digitalWrite (PTT1, LOW);
-      digitalWrite (PTT2, LOW);
-      digitalWrite (PTT3, LOW);
+    case 0:{ // PTT-x
+      PTT_tail_timeout[0][0] = millis(); // set time mark PTT 1
+      PTT_tail_timeout[1][0] = millis(); // set time mark PTT 2
+      PTT_tail_timeout[2][0] = millis(); // set time mark PTT 3
+      SequencerLevel = 1;
     break;
     }
     case 1:{ // PTT-1
-      digitalWrite (PTT1, LOW);
+      PTT_tail_timeout[0][0] = millis(); // set time mark PTT 1
+      SequencerLevel = 1;
     break;
     }
     case 2:{ // PTT-2
-      digitalWrite (PTT2, LOW);
+      PTT_tail_timeout[1][0] = millis(); // set time mark PTT 2
+      SequencerLevel = 2;
     break;
     }
     case 3:{ // PTT-3
-      digitalWrite (PTT3, LOW);
+      PTT_tail_timeout[2][0] = millis(); // set time mark PTT 3
+      SequencerLevel = 3;
     break;
     }
   }
-  delay(PAtail);
-  digitalWrite (PTTPA, LOW);      // PTT-PA
-  delay(SEQUENCERtail);
-  digitalWrite (SEQUENCER, LOW);  // SEQUENCER
-  #if defined(ETHERNET_MODULE)
-    MqttPub("ptt", 0, 0);
-  #endif
+}
+
+void check_ptt_low(){
+  switch (SequencerLevel) {
+    case 1:{ // PTT-1
+      if (millis() - PTT_tail_timeout[0][0] > (PTT_tail_timeout[0][1])){
+        digitalWrite (PTT1, LOW);
+        SequencerLevel = 4;
+        PTT_tail_timeout[3][0] = millis(); // set time mark PA
+      }
+    break;
+    }
+    case 2:{ // PTT-2
+      if (millis() - PTT_tail_timeout[1][0] > (PTT_tail_timeout[1][1])){
+        digitalWrite (PTT2, LOW);
+        SequencerLevel = 4;
+        PTT_tail_timeout[3][0] = millis(); // set time mark PA
+      }
+    break;
+    }
+    case 3:{ // PTT-3
+      if (millis() - PTT_tail_timeout[2][0] > (PTT_tail_timeout[2][1])){
+        digitalWrite (PTT3, LOW);
+        SequencerLevel = 4;
+        PTT_tail_timeout[3][0] = millis(); // set time mark PA
+      }
+    break;
+    }
+    case 4:{ // PTT-PA
+      if (millis() - PTT_tail_timeout[3][0] > (PTT_tail_timeout[3][1])){
+        digitalWrite (PTTPA, LOW);
+        SequencerLevel = 5;
+        PTT_tail_timeout[4][0] = millis(); // set time mark PA
+      }
+    break;
+    }
+    case 5:{ // SEQUENCER
+      if (millis() - PTT_tail_timeout[4][0] > (PTT_tail_timeout[4][1])){
+        digitalWrite (SEQUENCER, LOW);
+        SequencerLevel = 0;
+        PTT_tail_timeout[3][0] = millis(); // set time mark PA
+        #if defined(ETHERNET_MODULE)
+          MqttPub("ptt", 0, 0);
+        #endif
+      }
+    break;
+    }
+  }
 }
 
 #if defined(ETHERNET_MODULE)
@@ -2426,8 +2479,8 @@ void OpenInterfaceMODE(){
     }
     case 2:{ // SSB
       if(digitalRead(FootSW)==LOW || digitalRead(PTT232)==HIGH){   // FootSW / 232(usb audio-ssb pc memory) PTT
+        ptt_high(3);
         if(StatusArray[4] != 1){          // if change
-          ptt_high(3);
           StatusArray[4] = 1;
           #if defined(ETHERNET_MODULE)
             MqttPub("footsw", 0, 1);
@@ -3455,9 +3508,9 @@ void serialEcho() {
     }
 #endif
 
-// Open Interface III END -------------------------------------------------------------------------------
+// #OI3 END -------------------------------------------------------------------------------
 
-void K3NG_key()                                                      // <------------ changed from loop()
+void K3NG_key()                                                      // changed from loop() #OI3
 
 {
   // this is where the magic happens
@@ -3509,7 +3562,7 @@ void K3NG_key()                                                      // <-------
       if(StatusArray[2] == HIGH){                     // if Menu                        ___
         MenuEncoder();                                // activate Menu encoder             |
       }else{                                          // else                              | Modified for
-        check_rotary_encoder();                       // CW keyer encoder (original line)  | Open Interface III
+        check_rotary_encoder();                       // CW keyer encoder (original line)  | #OI3
       }                                               // endif                          ___|
     #endif //FEATURE_ROTARY_ENCODER
 
@@ -3551,7 +3604,7 @@ void K3NG_key()                                                      // <-------
     #endif //FEATURE_SLEEP
 
     #ifdef FEATURE_PTT_INTERLOCK
-//      service_ptt_interlock();          // DISABLE for Open Interface III
+      //service_ptt_interlock();          // disable for #OI3
     #endif //FEATURE_PTT_INTERLOCK
 
     #ifdef FEATURE_PADDLE_ECHO
@@ -6373,11 +6426,11 @@ void ptt_key()
 {
   if (ptt_line_activated == 0) {   // if PTT is currently deactivated, bring it up and insert PTT lead time delay
     if (configuration.current_ptt_line) {
-      ptt_high(1);                                            //  Modified for Open Interface III
-      digitalWrite (configuration.current_ptt_line, HIGH);
+      ptt_high(1);                                              //  add #OI3
+      // digitalWrite (configuration.current_ptt_line, HIGH);   //  disable #OI3
       #if defined(OPTION_WINKEY_2_SUPPORT) && defined(FEATURE_WINKEY_EMULATION)
       if ((wk2_both_tx_activated) && (ptt_tx_2)) {
-        digitalWrite (ptt_tx_2, HIGH);
+        // digitalWrite (ptt_tx_2, HIGH);                       //  disable #OI3
       }
       #endif
       delay(ptt_lead_time[configuration.current_tx-1]);
@@ -6392,14 +6445,13 @@ void ptt_unkey()
 {
   if (ptt_line_activated) {
     if (configuration.current_ptt_line) {
-      ptt_low(1);                                            //  Modified for Open Interface III
-      digitalWrite (configuration.current_ptt_line, LOW);
+      ptt_low(1);                                             //  add #OI3
+      // digitalWrite (configuration.current_ptt_line, LOW);  //  disable #OI3
       #if defined(OPTION_WINKEY_2_SUPPORT) && defined(FEATURE_WINKEY_EMULATION)
       if ((wk2_both_tx_activated) && (ptt_tx_2)) {
-        digitalWrite (ptt_tx_2, LOW);
+        // digitalWrite (ptt_tx_2, LOW);                      //  disable #OI3
       }
       #endif
-
     }
     ptt_line_activated = 0;
   }
@@ -16224,14 +16276,14 @@ void service_ptt_interlock(){
         #endif //FEATURE_DISPLAY
       }
       #if defined(ETHERNET_MODULE)
-        MqttPub("interlock", 0, ptt_interlock_active);    // add for Open Interface III
+        MqttPub("interlock", 0, ptt_interlock_active);    // add for #OI3
       #endif
     } else {
       if (ptt_interlock_active){
         ptt_interlock_active = 0;
       }
       #if defined(ETHERNET_MODULE)
-        MqttPub("interlock", 0, ptt_interlock_active);    // add for Open Interface III
+        MqttPub("interlock", 0, ptt_interlock_active);    // add for #OI3
       #endif
     }
     last_ptt_interlock_check = millis();

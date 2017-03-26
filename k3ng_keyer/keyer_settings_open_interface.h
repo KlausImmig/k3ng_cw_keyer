@@ -6,18 +6,18 @@
 #define hz_high_beep 1500                // frequency in hertz of high beep
 #define hz_low_beep 400                  // frequency in hertz of low beep
 #define initial_dah_to_dit_ratio 300     // 300 = 3 / normal 3:1 ratio
-#define initial_ptt_lead_time_tx1 10         // PTT lead time in mS
-#define initial_ptt_tail_time_tx1 200         // PTT tail time in mS
-#define initial_ptt_lead_time_tx2 10         // PTT lead time in mS
-#define initial_ptt_tail_time_tx2 200         // PTT tail time in mS
-#define initial_ptt_lead_time_tx3 0         // PTT lead time in mS
-#define initial_ptt_tail_time_tx3 10         // PTT tail time in mS
+#define initial_ptt_lead_time_tx1 0         // must be 0  ------
+#define initial_ptt_tail_time_tx1 0         // must be 0        |   SET in k3ng_keyer.ino
+#define initial_ptt_lead_time_tx2 0         // must be 0        |   Open Interface III config
+#define initial_ptt_tail_time_tx2 0         // must be 0        |   lines 1320-1330 
+#define initial_ptt_lead_time_tx3 0         // must be 0        |
+#define initial_ptt_tail_time_tx3 0         // must be 0  ------
 #define initial_ptt_lead_time_tx4 0         // PTT lead time in mS
-#define initial_ptt_tail_time_tx4 10         // PTT tail time in mS
+#define initial_ptt_tail_time_tx4 0         // PTT tail time in mS
 #define initial_ptt_lead_time_tx5 0         // PTT lead time in mS
-#define initial_ptt_tail_time_tx5 10         // PTT tail time in mS
+#define initial_ptt_tail_time_tx5 0         // PTT tail time in mS
 #define initial_ptt_lead_time_tx6 0         // PTT lead time in mS
-#define initial_ptt_tail_time_tx6 10         // PTT tail time in mS
+#define initial_ptt_tail_time_tx6 0         // PTT tail time in mS
 #define initial_qrss_dit_length 1        // QRSS dit length in seconds
 #define initial_pot_wpm_low_value 13     // Potentiometer WPM fully CCW
 #define initial_pot_wpm_high_value 35    // Potentiometer WPM fully CW
