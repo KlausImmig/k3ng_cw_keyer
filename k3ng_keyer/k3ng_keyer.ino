@@ -1266,7 +1266,7 @@ unsigned long automatic_sending_interruption_time = 0;
   Changelog:
   ----------
   2017-03 - All modified line in original code signed with #OI3
-          - Fix Sequencer
+          - Fix Sequencer PTT
   2017-02 - Interlock input (cinch, UDP)
           - Stop UDP Interlock by press Mode button
           - MQTT pub support
@@ -1315,7 +1315,6 @@ unsigned long automatic_sending_interruption_time = 0;
 #define MENU_AFTER_POWER_UP 2        // MENU after start up
 #define PCB_REV_3_1415                // revision of PCB
 #define BUTTON_BEEP                  // Mode button beep enable
-#define CW_TONE 480                  // disable = off, DTR/RTS PC keying
 #define VOLTAGE_MEASURE_ADJUST 0.3   // ofset for precise adjust voltage measure
 
 #define SEQUENCERlead  0             // SEQUENCER output lead delay ms between SEQ-->PA
@@ -1587,17 +1586,17 @@ char* MenuTree[19]= { // [radky][sloupce]
 #define MenuTreeSize (sizeof(MenuTree)/sizeof(char *)) //array size
 int CulumnPositionEnd;
 
-byte StatusArray[11] = {
-  HIGH,   // MODE lastbuttonstate
-  HIGH,   // MODE debounced signal
-  LOW,    // LOW-MODE | HIGH MENU
-  LOW,    // PTT232 active
-  LOW,    // FootSW change
-  LOW,    // PTT-PA active
-  LOW,    // PTT1 active
-  LOW,    // PTT2 active
-  LOW,    // PTT3 active
-  LOW,    // Interlock active from UDP
+byte StatusArray[10] = {
+  HIGH,   // 0 MODE lastbuttonstate
+  HIGH,   // 1 MODE debounced signal
+  LOW,    // 2 LOW-MODE | HIGH MENU
+  LOW,    // 3 PTT232 active
+  LOW,    // 4 FootSW change
+  LOW,    // 5 PTT-PA active
+  LOW,    // 6 PTT1 active
+  LOW,    // 7 PTT2 active
+  LOW,    // 8 PTT3 active
+  LOW,    // 9 Interlock active from UDP
 };
 //byte ptt_interlock_active = 0;  // define in K3NG code
 
@@ -2465,9 +2464,11 @@ void OpenInterfaceMODE(){
     break;
     }
     case 1:{ // CW PC
-      if(digitalRead(PTT232)==HIGH && StatusArray[3] == LOW){    // PTT-232
-        StatusArray[3] = HIGH;
+      if(digitalRead(PTT232)==HIGH){    // PTT-232
         ptt_high(1);
+        if(StatusArray[3] == LOW){
+          StatusArray[3] = HIGH;
+        }
       }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
         ptt_low(1);
         StatusArray[3] = LOW;
@@ -2505,9 +2506,11 @@ void OpenInterfaceMODE(){
       #if defined(FSK_TX)
         ButtonFSK();
       #endif
-      if(digitalRead(PTT232)==HIGH && StatusArray[3] == LOW){    // PTT-232
-        StatusArray[3] = HIGH;
+      if(digitalRead(PTT232)==HIGH){    // PTT-232
         ptt_high(1);
+        if(StatusArray[3] == LOW){
+          StatusArray[3] = HIGH;
+        }
       }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
         StatusArray[3] = LOW;
         ptt_low(1);
@@ -2524,9 +2527,11 @@ void OpenInterfaceMODE(){
     break;
     }
     case 5:{ // DIGITAL (AFSK)
-      if(digitalRead(PTT232)==HIGH && StatusArray[3] == LOW){    // PTT-232
-        StatusArray[3] = HIGH;
+      if(digitalRead(PTT232)==HIGH){    // PTT-232
         ptt_high(1);
+        if(StatusArray[3] == LOW){
+          StatusArray[3] = HIGH;
+        }
       }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
         StatusArray[3] = LOW;
         ptt_low(1);
