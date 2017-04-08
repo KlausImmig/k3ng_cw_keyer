@@ -1277,6 +1277,7 @@ unsigned long automatic_sending_interruption_time = 0;
 
   TODO:
   -----
+  - if CAT disable, show in menu 04 off
   - stop playng RTTY memory
   - show mqtt broker IP
   - disable Ethernet, if press Mode button at startup
@@ -2128,7 +2129,7 @@ void DCinMeasure(){
       lcd.setCursor(3, 0);
       lcd.print("Power LOW!");
       Loop[1]= 2;
-    }else if (DCinVoltage>18){
+    }else if (DCinVoltage>19){
       lcd.setCursor(2, 0);
       lcd.print("Power HIGH!");
       Loop[1]= 2;
