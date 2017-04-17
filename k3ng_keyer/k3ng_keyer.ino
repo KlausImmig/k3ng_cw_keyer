@@ -1878,7 +1878,7 @@ if (client.connect("arduinoClient")) {
 //-------------------------------------------------------------------------------------------------------
 
 void loop() {
-    OpenInterfaceIntelock();
+    OpenInterfaceInterlock();
     #if defined(BAND_DECODER)
       BandDecoder();
     #endif
@@ -1895,7 +1895,7 @@ void loop() {
 }    // end loop
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
-void OpenInterfaceIntelock(){      // <-------------- move to INTERRUPT?
+void OpenInterfaceInterlock(){      // <-------------- move to INTERRUPT?
       if (digitalRead(INTERLOCK) == ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
         ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
         if(ptt_interlock_active == 1){
@@ -1908,6 +1908,11 @@ void OpenInterfaceIntelock(){      // <-------------- move to INTERRUPT?
 }
 
 void ptt_high(int PTToutput){
+  // if(SequencerLevel == 1){
+  //   PTT_tail_timeout[0][0] = millis() + PTT_tail_timeout[0][1]; // set time mark PTT 1
+  //   digitalWrite (FSK, HIGH); delay(50); digitalWrite (FSK, LOW);          //  test pulse
+  // };
+
   if(ptt_interlock_active == 0){
     if(SequencerLevel == 0){
       digitalWrite (SEQUENCER, HIGH);  // SEQUENCER
@@ -2129,7 +2134,7 @@ void DCinMeasure(){
       lcd.setCursor(3, 0);
       lcd.print("Power LOW!");
       Loop[1]= 2;
-    }else if (DCinVoltage>19){
+    }else if (DCinVoltage>18){
       lcd.setCursor(2, 0);
       lcd.print("Power HIGH!");
       Loop[1]= 2;
@@ -6736,6 +6741,7 @@ void send_dit(){
 
   being_sent = SENDING_DIT;
   tx_and_sidetone_key(1);
+  ptt_low(1);                                             //  add #OI3 - PTT alive
   #ifdef DEBUG_VARIABLE_DUMP
     dit_start_time = millis();
   #endif
@@ -6824,6 +6830,7 @@ void send_dah(){
 
   being_sent = SENDING_DAH;
   tx_and_sidetone_key(1);
+  ptt_low(1);                                             //  add #OI3 - PTT alive
   #ifdef DEBUG_VARIABLE_DUMP
     dah_start_time = millis();
   #endif
