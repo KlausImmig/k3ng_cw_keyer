@@ -1288,7 +1288,7 @@ unsigned long automatic_sending_interruption_time = 0;
   ? use interrupt function for interlock, PTT232, Foot PTT
   ? save last MODE to eeprom
 
-  Known Bugs
+  Known Bugso
   ----------
   - RTTY RX decoder not work after tx mem or change mode
 
@@ -1329,6 +1329,12 @@ unsigned long automatic_sending_interruption_time = 0;
                     for CW                                         PAlead ___________|    |            |    |___________ PAtail
                    tail delay                                     PTTlead ________________|            |________________ PTTtail
                                       */
+                                      // 1 = pin8 at DB25 | 2 = pin20 at DB25 | 3 = pin22 at DB25
+ #define PTTmodeCW    1               // [1-3] How PTT TRX output use in mode CW
+ #define PTTmodeSSB   3               // [1-3] How PTT TRX output use in mode SSB
+ #define PTTmodeFSK   1               // [1-3] How PTT TRX output use in mode FSK
+ #define PTTmodeDIGI  3               // [1-3] How PTT TRX output use in mode DIGI(AFSK)
+
 // BAND DECODER Inputs
  #define SERBAUD2     9600     // [baud] CAT Serial port in/out baudrate
  #define ICOM_CIV              // read frequency from CIV (icom_civ.h) ** you must enabled 'CI-V transceive' in TRX settings **
@@ -1908,10 +1914,8 @@ void OpenInterfaceInterlock(){      // <-------------- move to INTERRUPT?
 }
 
 void ptt_high(int PTToutput){
-  // if(SequencerLevel == 1){
-  //   PTT_tail_timeout[0][0] = millis() + PTT_tail_timeout[0][1]; // set time mark PTT 1
-  //   digitalWrite (FSK, HIGH); delay(50); digitalWrite (FSK, LOW);          //  test pulse
-  // };
+  PTT_tail_timeout[0][0] = millis(); // set time mark PTT 1
+  ifSequencerLevel = 1;
 
   if(ptt_interlock_active == 0){
     if(SequencerLevel == 0){
@@ -2471,12 +2475,12 @@ void OpenInterfaceMODE(){
     }
     case 1:{ // CW PC
       if(digitalRead(PTT232)==HIGH){    // PTT-232
-        ptt_high(1);
+        ptt_high(PTTmodeCW);
         if(StatusArray[3] == LOW){
           StatusArray[3] = HIGH;
         }
       }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
-        ptt_low(1);
+        ptt_low(PTTmodeCW);
         StatusArray[3] = LOW;
       }
       #if defined(K3NG_KEYER)
@@ -2486,7 +2490,7 @@ void OpenInterfaceMODE(){
     }
     case 2:{ // SSB
       if(digitalRead(FootSW)==LOW || digitalRead(PTT232)==HIGH){   // FootSW / 232(usb audio-ssb pc memory) PTT
-        ptt_high(3);
+        ptt_high(PTTmodeSSB);
         if(StatusArray[4] != 1){          // if change
           StatusArray[4] = 1;
           #if defined(ETHERNET_MODULE)
@@ -2495,7 +2499,7 @@ void OpenInterfaceMODE(){
         }
       }else{
         if(StatusArray[4] != 0){
-          ptt_low(3);
+          ptt_low(PTTmodeSSB);
           StatusArray[4] = 0;
           #if defined(ETHERNET_MODULE)
             MqttPub("footsw", 0, 0);
@@ -2513,12 +2517,12 @@ void OpenInterfaceMODE(){
         ButtonFSK();
       #endif
       if(digitalRead(PTT232)==HIGH){    // PTT-232
-        ptt_high(1);
+        ptt_high(PTTmodeFSK);
         if(StatusArray[3] == LOW){
           StatusArray[3] = HIGH;
         }
       }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
-        StatusArray[3] = LOW;
+        StatusArray[PTTmodeFSK] = LOW;
         ptt_low(1);
       }
       MenuEncoder();
@@ -2534,13 +2538,13 @@ void OpenInterfaceMODE(){
     }
     case 5:{ // DIGITAL (AFSK)
       if(digitalRead(PTT232)==HIGH){    // PTT-232
-        ptt_high(1);
+        ptt_high(PTTmodeDIGI);
         if(StatusArray[3] == LOW){
           StatusArray[3] = HIGH;
         }
       }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
         StatusArray[3] = LOW;
-        ptt_low(1);
+        ptt_low(PTTmodeDIGI);
       }
       MenuEncoder();
     break;
@@ -2608,7 +2612,7 @@ void FSKmemoryTX(int memory){
   #if defined(AFSK_ENABLE)
     tone(TONE, MARK);
   #endif
-  ptt_high(1);
+  ptt_high(PTTmodeFSK);
   tmp = FSKmemory[memory].length();
   for (i = 0; i < tmp; i++) {
     positionCounter++;
@@ -2661,7 +2665,7 @@ void FSKmemoryTX(int memory){
     sendFsk();
     delay(5);
   }
-  ptt_low(1);
+  ptt_low(PTTmodeFSK);
   #if defined(SERIAL_FSK_TX_ECHO)
       Serial.println();
   #endif
@@ -2679,7 +2683,7 @@ void Serial2FSK(){
         #if defined(AFSK_ENABLE)
           tone(TONE, MARK);
         #endif
-        ptt_high(1);
+        ptt_high(PTTmodeFSK);
         // ch = ' '; Serial.print(ch); chTable(); sendFsk();   // Space before sending
         while (Serial.available()) {
             positionCounter++;
@@ -2733,7 +2737,7 @@ void Serial2FSK(){
             delay(5);
         }
         // ch = ' '; Serial.print(ch); chTable(); sendFsk();   // Space after sending
-        ptt_low(1);
+        ptt_low(PTTmodeFSK);
         #if defined(SERIAL_FSK_TX_ECHO)
             Serial.println();
         #endif
@@ -6437,7 +6441,7 @@ void ptt_key()
 {
   if (ptt_line_activated == 0) {   // if PTT is currently deactivated, bring it up and insert PTT lead time delay
     if (configuration.current_ptt_line) {
-      ptt_high(1);                                              //  add #OI3
+      ptt_high(PTTmodeCW);                                              //  add #OI3
       // digitalWrite (configuration.current_ptt_line, HIGH);   //  disable #OI3
       #if defined(OPTION_WINKEY_2_SUPPORT) && defined(FEATURE_WINKEY_EMULATION)
       if ((wk2_both_tx_activated) && (ptt_tx_2)) {
@@ -6456,7 +6460,8 @@ void ptt_unkey()
 {
   if (ptt_line_activated) {
     if (configuration.current_ptt_line) {
-      ptt_low(1);                                             //  add #OI3
+      ptt_low(PTTmodeCW);                                             //  add #OI3
+      digitalWrite (FSK, HIGH); delay(50); digitalWrite (FSK, LOW);          //  test pulse
       // digitalWrite (configuration.current_ptt_line, LOW);  //  disable #OI3
       #if defined(OPTION_WINKEY_2_SUPPORT) && defined(FEATURE_WINKEY_EMULATION)
       if ((wk2_both_tx_activated) && (ptt_tx_2)) {
@@ -6741,7 +6746,6 @@ void send_dit(){
 
   being_sent = SENDING_DIT;
   tx_and_sidetone_key(1);
-  ptt_low(1);                                             //  add #OI3 - PTT alive
   #ifdef DEBUG_VARIABLE_DUMP
     dit_start_time = millis();
   #endif
@@ -6830,7 +6834,6 @@ void send_dah(){
 
   being_sent = SENDING_DAH;
   tx_and_sidetone_key(1);
-  ptt_low(1);                                             //  add #OI3 - PTT alive
   #ifdef DEBUG_VARIABLE_DUMP
     dah_start_time = millis();
   #endif
