@@ -1,4 +1,4 @@
-More in [Last stable commit from 17 Apr](https://github.com/ok1hra/k3ng_cw_keyer/commits/)
+Last stable commit [from 17 Apr](https://github.com/ok1hra/k3ng_cw_keyer/commits/)
 
 # Open Interface III
 Arduino firmware modified for Open Interface III hardware - based on **K3NG Arduino CW Keyer, which in addition includes:**
