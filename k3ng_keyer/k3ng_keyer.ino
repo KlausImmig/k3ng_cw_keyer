@@ -1297,23 +1297,35 @@ unsigned long automatic_sending_interruption_time = 0;
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
 #define VOLTAGE_MEASURE_ADJUST 0.3    // ofset for precise adjust voltage measure
-boolean ETHERNET_MODULE = 0;          // enable ETHERNET module (must be installed) EXPERIMENTAL
+boolean ETHERNET_MODULE = 1;          // enable ETHERNET module (must be installed) EXPERIMENTAL
+boolean ACC_KEYBOARD    = 1;          // Shift in/out register via ACC
+boolean RemoteRelay     = 1;          // IP controled remote remoteRelay
+boolean KeyboardAnswLed = 1;          // Keyboard Led shown answered UDP packet from IP RemoteRelay
+                                      // + latency measure. Disable set localy
 
 // FEATURES AND OPTIONS
 boolean K3NG_KEYER      = 1;          // enable CW keyer
 boolean FSK_TX          = 1;          // enable RTTY keying
 boolean FSK_RX          = 0;          // enable RTTY decoder - EXPERIMENTAL!
 
+boolean MQTT_ENABLE     = 0;          // enable public to MQTT broker
 String MQTT_PATH        = "oi3";      // Identificator your device in MQTT
 int MQTT_PORT           = 1883;       // MQTT broker PORT
 boolean MQTT_LOGIN      = 1;          // enable MQTT broker login
 char MQTT_USER          = 'login';      // MQTT broker user login
 char MQTT_PASS          = 'passwd';         // MQTT broker password
 int UDP_RTTY_PORT       = 89;         // UDP port listen to RTTY character (FSK mode)
-int UDP_COMMAND_PORT    = 88;         // UDP port listen to command EXPERIMENTAL!
+int UDP_COMMAND_PORT    = 88;         // UDP port listen to command
+
                                       // m:#;   - Mode # 0-5
                                       // i:#;   - INTERLOCK # 0/1 (on/off)
                                       // p:#:%; - PTT # 0/1 (on/off), % 0-3 (0=PTTPA, 1=PTT1, 2=PTT2, 3=PTT3)
+                                      // r:###; - ### Bank0-2 binary for set LED on keyboard (if installed) and measure latency
+                                      //          maybe used also as local relay
+                                      // b:r#;  - Broadcast packet
+                                      //        - r = Relay board, # = ID
+                                      //        - o = Rotator board, # = ID
+
 String YOUR_CALL        = "Your Call";
 int MODE_AFTER_POWER_UP = 4;          // MODE after start up
 int MENU_AFTER_POWER_UP = 2;          // MENU after start up
@@ -1381,7 +1393,7 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON L
   #include <EthernetUdp2.h>
   #include <PubSubClient.h>
   byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEE};
-  boolean USE_DHCP = 0;                    // Uncoment to Enable DHCP
+  boolean USE_DHCP = 1;                    // Uncoment to Enable DHCP
   IPAddress ip(192, 168, 1, 220);         // IP
   IPAddress gateway(192, 168, 1, 1);    // GATE
   IPAddress subnet(255, 255, 255, 0);     // MASK
@@ -1399,6 +1411,10 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON L
   char mqttPath[20];
   EthernetUDP UdpCommand; // An EthernetUDP instance to let us send and receive packets over UDP
   EthernetUDP UdpRtty;
+  IPAddress RemoteRelayIP(192, 168, 1, 16);   // remote UDP IP relay
+  int RemoteRelayPort     = 88;               // remote UDP IP relay port
+  long RemoteRelayLatency[2];                 // start, stop mark
+  byte TxUdpBuffer[] = { B01110010, B00111010, 0, 0, 0, B00111011}; // r, :, Bank0, Bank1, Bank2, ;
 // }
 
 // microSD
@@ -1487,17 +1503,19 @@ byte SequencerLevel = 0;   // 0 = off, 1-2-3 = PTT1-2-3, 4 = PA, 5 = SEQ
   const int FSKDET = 33;    // in  FSK detector from USB/serial interface
   const int WINKEY = 27;    // out disable DTR/RTS from from USB/serial interface during run winkey emulator
   const int TONE = 4;       // out
-  const int ACC4 = 47;
-  const int ACC5 = 13;
-  const int ACC6 = 5;
-  const int ACC7 = 30;
+  const int ACC4 = 47;      // if enable ACC SHIFT OUT KEYBOARD
+  const int ACC5 = 13;      // if enable ACC SHIFT OUT KEYBOARD
+  const int ACC6 = 5;      // if enable ACC SHIFT OUT KEYBOARD
+  const int ACC7 = 30;       // if enable ACC SHIFT IN KEYBOARD
   const int ACC8 = 32;
-  const int ACC9 = 11;
-  const int ACC10 = 12;
+  const int ACC9 = 11;       // if enable ACC SHIFT IN KEYBOARD
+  const int ACC10 = 12;      // if enable ACC SHIFT IN KEYBOARD
   const int ACC11 = 38;
   const int ACC12 = A3;
   const int ACC13 = A4;
   const int ACC14 = A8;
+  const int ACC15 = 21;     // SCL/interrupt/ if enable ACC SHIFT OUT KEYBOARD
+  const int ACC16 = 20;     // SDA
   const int ACC17 = A9;
   const int ACC19 = A11;    // if define Icom ACC voltage input
   const int SelfRES = 39;
@@ -1572,7 +1590,7 @@ char* modeLCD[6][2]= {
     {"|DIG", "Data  AFSK"},
 };
 
-char* MenuTree[19]= { // [radky][sloupce]
+char* MenuTree[22]= { // [radky][sloupce]
   "Your Call",         //  0 call
   "PCB 3.1415",      //  1
   "DCin",            //  2
@@ -1591,7 +1609,10 @@ char* MenuTree[19]= { // [radky][sloupce]
   "PTTlead",         // 15
   "PTTtail",         // 16
   "",                // 17  MODE fullname
-  "",                // 18  IP switch
+  "B0:",             // 18  Buttons bank0
+  "B1:",             // 19  Buttons bank1
+  "B2:",             // 20  Buttons bank2
+  "Lat ",             // 21 Last Relay changed latency [us]
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -1639,6 +1660,19 @@ byte LFi[8] = {0b10111,0b10111,0b10001,0b11111,0b10001,0b10111,0b10011,0b10111};
 byte CRi[8] = {0b11001,0b10111,0b10111,0b11001,0b11111,0b10001,0b10111,0b10111};
 byte UPi[8] = {0b11111,0b11111,0b11011,0b10001,0b00100,0b01110,0b11111,0b11111};
 byte DWNi[8] = {0b11111,0b11111,0b01110,0b00100,0b10001,0b11011,0b11111,0b11111};
+
+// ACC SHIFT OUT KEYBOARD
+#define ShiftOutDataPin ACC9
+#define ShiftOutLatchPin ACC7
+#define ShiftOutClockPin ACC10
+
+// ACC SHIFT IN KEYBOARD
+#define ShiftInInterruptPin ACC15   // Interrupt
+#define ShiftInDataPin ACC5
+#define ShiftInLatchPin ACC4
+#define ShiftInClockPin ACC6
+boolean rxShiftInRead;
+byte rxShiftInButton[3]{0,0,0};  // three button bank: 1-8 switch, 9-16 one from, encoder...
 
 // BAND DECODER
 int BAND;
@@ -1884,6 +1918,20 @@ void setup()
     // myFile.close();
   }
 
+  // ACC KEYBOARD
+  if(ACC_KEYBOARD == 1){
+    // SHIFT OUT
+    pinMode(ShiftOutLatchPin, OUTPUT);
+    pinMode(ShiftOutClockPin, OUTPUT);
+    pinMode(ShiftOutDataPin, OUTPUT);
+    // SHIFT IN
+    pinMode (ShiftInInterruptPin, INPUT);
+    attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);  // need detachInterrupt in IncomingUDP() subroutine
+    pinMode(ShiftInLatchPin, OUTPUT);
+    pinMode(ShiftInClockPin, OUTPUT);
+    pinMode(ShiftInDataPin, INPUT);
+  }
+
   //ETHERNET - MQTT - UDP
   if (ETHERNET_MODULE==true){
     if (USE_DHCP == 1){  // initialize the ethernet device
@@ -1891,7 +1939,9 @@ void setup()
     }else{
       Ethernet.begin(mac, ip, myDns, gateway, subnet);
     }
-    client.setServer(server, MQTT_PORT);
+    if(MQTT_ENABLE == true){
+      client.setServer(server, MQTT_PORT);
+    }
     //client.setCallback(callback);
     UdpCommand.begin(UdpCommandPort);   // UDP
     UdpRtty.begin(UdpRttyPort);
@@ -1903,11 +1953,11 @@ void setup()
     lcd.setCursor(1, 0);
     lcd.print(Ethernet.localIP());
     delay(5000);
-    if (MQTT_LOGIN==true){
+    if (MQTT_ENABLE == true && MQTT_LOGIN == true){
       if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)){
         AfterMQTTconnect();
       }
-    }else{
+    }else if(MQTT_ENABLE == true){
       if (client.connect("arduinoClient")){
         AfterMQTTconnect();
       }
@@ -1936,6 +1986,71 @@ void loop() {
 }    // end loop
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
+// http://www.catonmat.net/blog/low-level-bit-hacks-you-absolutely-must-know/
+
+void AccKeyboardShift(){    // run from interrupt
+  digitalWrite(ShiftInLatchPin,1);   //Set latch pin to 1 to get recent data into the CD4021
+  delayMicroseconds(15);
+  digitalWrite(ShiftInLatchPin,0);     //Set latch pin to 0 to get data from the CD4021
+  for (int i=1; i<17; i++){                // 16 = two bank
+    digitalWrite(ShiftInClockPin, 0);
+    rxShiftInRead = digitalRead(ShiftInDataPin);
+      switch (rxShiftInRead) {
+        case 1:
+            switch (i) {
+              case 1: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<7); break;  // invert n-th bit
+              case 2: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<6); break;
+              case 3: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<5); break;
+              case 4: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<4); break;
+              case 5: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<3); break;
+              case 6: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<2); break;
+              case 7: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<1); break;
+              case 8: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<0); break;
+              case  9: rxShiftInButton[1] = B10000000; break;                   // set n-th bit
+              case 10: rxShiftInButton[1] = B01000000; break;
+              case 11: rxShiftInButton[1] = B00100000; break;
+              case 12: rxShiftInButton[1] = B00010000; break;
+              case 13: rxShiftInButton[1] = B00001000; break;
+              case 14: rxShiftInButton[1] = B00000100; break;
+              case 15: rxShiftInButton[1] = B00000010; break;
+              case 16: rxShiftInButton[1] = B00000001; break;
+              default:
+                // if nothing else matches, do the default
+              break;
+            }
+          break;
+        case 0: break;
+      }
+      digitalWrite(ShiftInClockPin, 1);
+  }
+
+  // UDP send
+  if(ETHERNET_MODULE == 1 && RemoteRelay == 1){
+    TxUdpBuffer[2]=rxShiftInButton[0];    // set buffer
+    TxUdpBuffer[3]=rxShiftInButton[1];
+    TxUdpBuffer[4]=rxShiftInButton[2];
+    UdpCommand.beginPacket(RemoteRelayIP, RemoteRelayPort);
+      UdpCommand.write(TxUdpBuffer, sizeof(TxUdpBuffer));   // send buffer
+      RemoteRelayLatency[0] = millis(); // set START time mark UDP command latency
+    UdpCommand.endPacket();
+  }
+
+  // MQTT send
+  if (MQTT_ENABLE==1){
+    MqttPub("KeybBank0", 0, rxShiftInButton[0]);
+    MqttPub("KeybBank1", 0, rxShiftInButton[1]);
+    // MqttPub("KeybBank2", 0, rxShiftInButton[2]);   // bank2 disable
+  }
+
+  // SHIFT OUT
+  if(KeyboardAnswLed==0){
+    digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
+    // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[2]);    // bank2
+    shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[1]);    // bank1
+    shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[0]);    // bank0
+    digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
+  }
+}
 
 void readSDSettings(){
  char character;
@@ -2139,6 +2254,7 @@ void printDirectory(File dir, int numTabs) {
   }
 
 void AfterMQTTconnect(){
+  if(ETHERNET_MODULE == true && MQTT_ENABLE == true){
   //    if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {          // public IP addres to MQTT
         IPAddress IPlocalAddr = Ethernet.localIP();                           // get
         String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
@@ -2176,6 +2292,7 @@ void AfterMQTTconnect(){
         path2.toCharArray( mqttPath, 20 );
         String(PAtail).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
+  }
 }
 
 void OpenInterfaceInterlock(){      // <-------------- move to INTERRUPT?
@@ -2184,7 +2301,7 @@ void OpenInterfaceInterlock(){      // <-------------- move to INTERRUPT?
         if(ptt_interlock_active == 1){
           ptt_low(0);
         }
-        if (ETHERNET_MODULE==true){
+        if(ETHERNET_MODULE == true && MQTT_ENABLE == true){
           MqttPub("interlock", 0, ptt_interlock_active);
         }
     }
@@ -2221,9 +2338,7 @@ void ptt_high(int PTToutput){
         }
       }
       delay(PTTlead);
-      if (ETHERNET_MODULE==true){
         MqttPub("ptt", 0, 1);
-      }
     }
   }
 }
@@ -2294,9 +2409,7 @@ void check_ptt_low(){
         digitalWrite (SEQUENCER, LOW);
         SequencerLevel = 0;
         PTT_tail_timeout[3][0] = millis(); // set time mark PA
-        if (ETHERNET_MODULE==true){
           MqttPub("ptt", 0, 0);
-        }
       }
     break;
     }
@@ -2305,6 +2418,8 @@ void check_ptt_low(){
 
 // Incoming UDP commands
 void IncomingUDP(){
+  // detachInterrupt because this interrupt worked with ethernet also
+  detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
 
   // RTTY transmit incoming string
   UDPpacketSize = UdpRtty.parsePacket();    // if there's data available, read a packet
@@ -2323,6 +2438,27 @@ void IncomingUDP(){
   if (UDPpacketSize){
     UdpCommand.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
 
+    // RELAY ANSWER - led Bank0-2
+    if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && packetBuffer[0] == 'r' && packetBuffer[1] == ':'){
+      // if(packetBuffer[5] == ';'){
+      //   ShiftOutByte[2] = packetBuffer[4];    // Bank2
+      //   ShiftOutByte[1] = packetBuffer[3];    // Bank1
+      //   ShiftOutByte[0] = packetBuffer[2];    // Bank0
+      // }else if(packetBuffer[4] == ';'){
+      //   ShiftOutByte[1] = packetBuffer[3];    // Bank1
+      //   ShiftOutByte[0] = packetBuffer[2];    // Bank0
+      // }else if(packetBuffer[3] == ';'){
+      //   ShiftOutByte[0] = packetBuffer[2];    // Bank0
+      // }
+      RemoteRelayLatency[1] = (millis()-RemoteRelayLatency[0])/2; // set latency (half path in ms us/2/1000)
+
+      digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
+      // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[4]);    // bank2
+      shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[3]);    // bank1
+      shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[2]);    // bank0
+      digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
+    }
+
     // INTERLOCK
     if (packetBuffer[0] == 'i' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
       if(packetBuffer[2] == '1'){
@@ -2333,9 +2469,7 @@ void IncomingUDP(){
         ptt_interlock_active = B00000;
         StatusArray[9] = LOW;
       }
-      if (ETHERNET_MODULE==true){
         MqttPub("interlock", 0, ptt_interlock_active);
-      }
     }
 
     // PTT
@@ -2348,15 +2482,11 @@ void IncomingUDP(){
       if(packetBuffer[2] == '0'){
         if(ptt_interlock_active == 0){  // if interlock not active
           digitalWrite (tmp, HIGH);
-          if (ETHERNET_MODULE==true){
             MqttPub("ptt", 0, 1);
-          }
         }
       }else if(packetBuffer[2] == '1'){
           digitalWrite (tmp, HIGH);
-          if (ETHERNET_MODULE==true){
             MqttPub("ptt", 0, 0);
-          }
       }
     }
 
@@ -2371,10 +2501,11 @@ void IncomingUDP(){
 //    lcd.print("      ");
   memset(packetBuffer, 0, sizeof(packetBuffer));   // Clear contents of Buffer
   }
+  attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
 }
 
 void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
-  if (MQTT_LOGIN==true){
+  if(ETHERNET_MODULE == true && MQTT_ENABLE == true && MQTT_LOGIN==true){
     if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
       String path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
@@ -2400,7 +2531,7 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
 }
 
 void MqttPubString(String path, String character){
-  if (MQTT_LOGIN==true){
+  if(ETHERNET_MODULE == true && MQTT_ENABLE == true && MQTT_LOGIN==true){
     if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
       String path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
@@ -2430,9 +2561,7 @@ void DCinMeasure(){
       Loop[1]= 2;
     }
     Timeout[7][0] = millis();                      // set time mark
-    if (ETHERNET_MODULE==true){
       MqttPub("pwrvoltage", DCinVoltage, 0);
-    }
   }
 }
 
@@ -2644,6 +2773,52 @@ void MenuToLCD(int nr){
       CulumnPosition=CulumnPosition+String(modeLCD[Loop[0]][1]).length()-1;
     break;
     }
+    case 18:{ // Buttons bank 0
+      lcd.setCursor(CulumnPosition-1, 1);
+      if(ACC_KEYBOARD == 1){
+        lcd.print(PrintByte(rxShiftInButton[0]));
+        CulumnPosition=CulumnPosition+String(rxShiftInButton[0]).length()-1;
+      }else{
+        lcd.print("ExtButt OFF");
+        CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+      }
+    break;
+    }
+    case 19:{ // Buttons bank 1
+      lcd.setCursor(CulumnPosition-1, 1);
+      if(ACC_KEYBOARD == 1){
+        lcd.print(PrintByte(rxShiftInButton[1]));
+        CulumnPosition=CulumnPosition+String(rxShiftInButton[1]).length()-1;
+      }else{
+        lcd.print("ExtButt OFF");
+        CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+      }
+    break;
+    }
+    case 20:{ // Buttons bank 2
+      lcd.setCursor(CulumnPosition-1, 1);
+      if(ACC_KEYBOARD == 1){
+        lcd.print(PrintByte(rxShiftInButton[2]));
+        CulumnPosition=CulumnPosition+String(rxShiftInButton[2]).length()-1;
+      }else{
+        lcd.print("ExtButt OFF");
+        CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+      }
+    break;
+    }
+    case 21:{ // Last relay command latency measure
+      lcd.setCursor(CulumnPosition-1, 1);
+      if(ACC_KEYBOARD == 1 && KeyboardAnswLed == 1){
+        lcd.print(RemoteRelayLatency[1]);
+        lcd.print("ms");
+        CulumnPosition=CulumnPosition+String(RemoteRelayLatency[1]).length()-1;
+      }else{
+        lcd.print("RelAnsw OFF");
+        CulumnPosition=CulumnPosition+String("RelAnsw OFF").length()-1;
+      }
+    break;
+    }
+
 
   }
   if(StatusArray[2] == LOW){        // Mode
@@ -2655,6 +2830,19 @@ void MenuToLCD(int nr){
     lcd.print(" ");
     CulumnPosition++;
   }
+}
+
+String PrintByte(byte ByteToPrint){
+  String LCDstring = "";
+  for (int i=0; i<8; i++){
+    if (ByteToPrint & (1<<i)) {
+      LCDstring += i+1;
+    }
+    else {
+      LCDstring += " ";
+    }
+  }
+  return LCDstring;
 }
 
 void OpenInterfaceMENUtimeout(){
@@ -2685,17 +2873,13 @@ void OpenInterfaceMENU(){
             if(StatusArray[2] == LOW){                       // if MENU disable, MODE active
               if (ptt_interlock_active == 1 && StatusArray[9] == HIGH) {   // if UDP Interlock ON
                 ptt_interlock_active = B00000;                            // manual UDP interlock OFF
-                if (ETHERNET_MODULE==true){
                   MqttPub("interlock", 0, ptt_interlock_active);
-                }
               }else{
                 Loop[0]++;
                 if(Loop[0]==6){
                   Loop[0]=0;
                 }
-                if (ETHERNET_MODULE==true){
                   MqttPub("mode", 0, Loop[0]);
-                }
                 switch (Loop[0]) {
                   case 0:{ // CW Keyer
                       digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
@@ -2779,17 +2963,13 @@ void OpenInterfaceMODE(){
         ptt_high(PTTmodeSSB);
         if(StatusArray[4] != 1){          // if change
           StatusArray[4] = 1;
-          if (ETHERNET_MODULE==true){
             MqttPub("footsw", 0, 1);
-          }
         }
       }else{
         if(StatusArray[4] != 0){
           ptt_low(PTTmodeSSB);
           StatusArray[4] = 0;
-          if (ETHERNET_MODULE==true){
             MqttPub("footsw", 0, 0);
-          }
         }
       }
       MenuEncoder();
@@ -3111,9 +3291,7 @@ void sendFsk(){
 
 void chTable()
 {
-        if (ETHERNET_MODULE==true){
           MqttPubString("rtty", String(ch));
-        }
         fig2 = -1;
         if(ch == ' ')
         {
@@ -3286,9 +3464,7 @@ void fskDecoder(){
                               positionCounter=0;
                           }
                           lcd.print(chIn);
-                          if (ETHERNET_MODULE==true){
                             MqttPubString("rtty", String(chIn));
-                          }
                 }
                 dsp = 0;
         }
@@ -16567,16 +16743,12 @@ void service_ptt_interlock(){
         lcd_center_print_timed("PTT Interlock",0,2000);
         #endif //FEATURE_DISPLAY
       }
-      if (ETHERNET_MODULE==true){
         MqttPub("interlock", 0, ptt_interlock_active);    // add for #OI3
-      }
     } else {
       if (ptt_interlock_active){
         ptt_interlock_active = 0;
       }
-      if (ETHERNET_MODULE==true){
         MqttPub("interlock", 0, ptt_interlock_active);    // add for #OI3
-      }
     }
     last_ptt_interlock_check = millis();
   }
