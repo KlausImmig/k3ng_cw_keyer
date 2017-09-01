@@ -1199,6 +1199,7 @@ unsigned long automatic_sending_interruption_time = 0;
   ----------------------
   https://remoteqth.com/open-interface.php
   by OK1HRA with RTTY code from JI3BNB
+  TNX OK1IAK code help
   rev 3,1415
 
    ___               _        ___ _____ _  _
@@ -1314,17 +1315,21 @@ int MQTT_PORT           = 1883;       // MQTT broker PORT
 boolean MQTT_LOGIN      = 1;          // enable MQTT broker login
 char MQTT_USER          = 'login';      // MQTT broker user login
 char MQTT_PASS          = 'passwd';         // MQTT broker password
+int NETWORK_ID          = 0;
 int UDP_RTTY_PORT       = 89;         // UDP port listen to RTTY character (FSK mode)
 int UDP_COMMAND_PORT    = 88;         // UDP port listen to command
 
                                       // m:#;   - Mode # 0-5
                                       // i:#;   - INTERLOCK # 0/1 (on/off)
                                       // p:#:%; - PTT # 0/1 (on/off), % 0-3 (0=PTTPA, 1=PTT1, 2=PTT2, 3=PTT3)
-                                      // r:###; - ### Bank0-2 binary for set LED on keyboard (if installed) and measure latency
+                                      // s:###; - ### Switch0-2 binary for set LED on keyboard (if installed) and measure latency
                                       //          maybe used also as local relay
-                                      // b:r#;  - Broadcast packet
-                                      //        - r = Relay board, # = ID
-                                      //        - o = Rotator board, # = ID
+
+                                      // b:s#;  - Broadcast identify packet
+                                      //        - s = Switch board, # = ID
+                                      //        - o = OpenInterface, # = ID
+                                      //        ? r = Rotator, # = ID
+                                      //        ? c = Controller, # = ID
 
 String YOUR_CALL        = "Your Call";
 int MODE_AFTER_POWER_UP = 4;          // MODE after start up
@@ -1411,10 +1416,14 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON L
   char mqttPath[20];
   EthernetUDP UdpCommand; // An EthernetUDP instance to let us send and receive packets over UDP
   EthernetUDP UdpRtty;
-  IPAddress RemoteRelayIP(192, 168, 1, 16);   // remote UDP IP relay
-  int RemoteRelayPort     = 88;               // remote UDP IP relay port
-  long RemoteRelayLatency[2];                 // start, stop mark
-  byte TxUdpBuffer[] = { B01110010, B00111010, 0, 0, 0, B00111011}; // r, :, Bank0, Bank1, Bank2, ;
+  IPAddress BroadcastIP(0, 0, 0, 0);        // Broadcast IP address
+  int BroadcastPort       = 88;             // destination broadcast packet port
+  IPAddress RemoteRelayIP(0, 0, 0, 0);      // remote UDP IP relay - set from UDP DetectRemote array
+  int RemoteRelayPort     = 0;             // remote UDP IP relay port
+  byte DetectedRemoteRelay[10][5];          // detect by RX broadcast packet - storage by ID (ID=rows)
+  long RemoteRelayLatency[2];               // start, stop mark
+  byte TxUdpBuffer[] = {B01110011, B00111010, 0, 0, 0, B00111011}; // s, :, Bank0, Bank1, Bank2, ;
+  // r=B01110010
 // }
 
 // microSD
@@ -1444,7 +1453,7 @@ String FSKmemory[6]= {
 };
 
 // TIMEOUTS
-long Timeout[8][2] = { // [lines][rows]
+long Timeout[9][2] = { // [lines][rows]
     {0, 500},          // LCD   [0][0-timer/1-timeout(LCDrefresh)]
     {0, 3000},         // Menu to Mode timeout
     {0, 1000},         // Band decoder read (Icom voltage, Yaesu BCD)  [2][0-timer/1-timeout(input refresh)]
@@ -1453,6 +1462,7 @@ long Timeout[8][2] = { // [lines][rows]
     {0, 50},           // MODE button debounce [5][0-timer/1-debounce]
     {0, 500},          // MODE button long [6][0-timer/1-long]
     {0, 1000},         // DCin voltage measure [7][0-timer/1-long]
+    {0, 60000},         // UDP Broadcast packet [7][0-timer/1-timeout]
 };
 long PTT_tail_timeout[5][2] = { // [lines][rows]
     {0, PTTtail},          // PTT 1
@@ -1609,10 +1619,10 @@ char* MenuTree[22]= { // [radky][sloupce]
   "PTTlead",         // 15
   "PTTtail",         // 16
   "",                // 17  MODE fullname
-  "B0:",             // 18  Buttons bank0
-  "B1:",             // 19  Buttons bank1
-  "B2:",             // 20  Buttons bank2
-  "Lat ",             // 21 Last Relay changed latency [us]
+  "S0:",             // 18  Switch bank0
+  "S1:",             // 19  Switch bank1
+  "S2:",             // 20  Switch bank2
+  "Lat ",             // 21 Last Switch changed latency [us]
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -1868,11 +1878,11 @@ void setup()
     lcd.print(F(" micro SD card  "));
     lcd.setCursor(0, 1);
     lcd.print(F(" not present   "));
-    delay(3000);
+    delay(1000);
   }else{
     if (!SD.begin(SDCS)) {
       lcd.print(F("Init SDcard fail"));
-      delay(3000);
+      delay(1000);
       return;
     }else{
       lcd.print(F("Init SDcard done"));
@@ -1908,7 +1918,7 @@ void setup()
         // myFile = SD.open("oi3.cfg", FILE_WRITE);
         // myFile.close();
       }
-      delay(4000);
+      delay(2000);
     }
 
     // myFile = SD.open("oi3.cfg", FILE_WRITE);
@@ -1949,10 +1959,10 @@ void setup()
     lcd.clear();
     lcd.setCursor(1, 0);
     lcd.print(F("IP address:"));
-    delay(1000);
+    delay(500);
     lcd.setCursor(1, 0);
     lcd.print(Ethernet.localIP());
-    delay(5000);
+    delay(2500);
     if (MQTT_ENABLE == true && MQTT_LOGIN == true){
       if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)){
         AfterMQTTconnect();
@@ -1962,6 +1972,7 @@ void setup()
         AfterMQTTconnect();
       }
     }
+    SendBroadcastUdp();
   }
 
 } // SETUP END
@@ -1983,6 +1994,9 @@ void loop() {
     if(SequencerLevel != 0){ // if Sequencer on
       check_ptt_low();
     }
+    // if (millis() - Timeout[8][0] > (Timeout[8][1])){
+    //   SendBroadcastUdp();
+    // }
 }    // end loop
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
@@ -2024,7 +2038,43 @@ void AccKeyboardShift(){    // run from interrupt
       digitalWrite(ShiftInClockPin, 1);
   }
 
-  // UDP send
+  // Serial2.println();
+  // Serial2.print("BAND: ");
+  // Serial2.println(BAND);
+
+  // for (i = 0; i < 10; i++) {
+  //   Serial2.print(i);
+  //   Serial2.print("  ");
+  //   Serial2.print(DetectedRemoteRelay [i] [0]);
+  //   Serial2.print(".");
+  //   Serial2.print(DetectedRemoteRelay [i] [1]);
+  //   Serial2.print(".");
+  //   Serial2.print(DetectedRemoteRelay [i] [2]);
+  //   Serial2.print(".");
+  //   Serial2.print(DetectedRemoteRelay [i] [3]);
+  //   Serial2.print(":");
+  //   Serial2.println(DetectedRemoteRelay [i] [4]);
+  // }
+
+  // Serial2.print("  ");
+  // Serial2.print(RemoteRelayIP);
+  // Serial2.print(":");
+  // Serial2.print(RemoteRelayPort);
+  // Serial2.print("  ->  ");
+
+  // SET IP:PORT from array by relay ID (id = rows)
+  // RemoteRelayIP = DetectedRemoteRelay[packetBuffer[3]];
+  // RemoteRelayPort = DetectedRemoteRelay[packetBuffer[3]][4];
+  RemoteRelayIP = DetectedRemoteRelay[BAND];
+  RemoteRelayPort = DetectedRemoteRelay[BAND][4];
+
+  // Serial2.print(RemoteRelayIP);
+  // Serial2.print(":");
+  // Serial2.println(RemoteRelayPort);
+
+
+
+  // UDP send to RELAY
   if(ETHERNET_MODULE == 1 && RemoteRelay == 1){
     TxUdpBuffer[2]=rxShiftInButton[0];    // set buffer
     TxUdpBuffer[3]=rxShiftInButton[1];
@@ -2438,18 +2488,8 @@ void IncomingUDP(){
   if (UDPpacketSize){
     UdpCommand.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
 
-    // RELAY ANSWER - led Bank0-2
-    if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && packetBuffer[0] == 'r' && packetBuffer[1] == ':'){
-      // if(packetBuffer[5] == ';'){
-      //   ShiftOutByte[2] = packetBuffer[4];    // Bank2
-      //   ShiftOutByte[1] = packetBuffer[3];    // Bank1
-      //   ShiftOutByte[0] = packetBuffer[2];    // Bank0
-      // }else if(packetBuffer[4] == ';'){
-      //   ShiftOutByte[1] = packetBuffer[3];    // Bank1
-      //   ShiftOutByte[0] = packetBuffer[2];    // Bank0
-      // }else if(packetBuffer[3] == ';'){
-      //   ShiftOutByte[0] = packetBuffer[2];    // Bank0
-      // }
+    // RELAY ANSWER > SET LED - Bank0-2
+    if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && packetBuffer[0] == 's' && packetBuffer[1] == ':'){
       RemoteRelayLatency[1] = (millis()-RemoteRelayLatency[0])/2; // set latency (half path in ms us/2/1000)
 
       digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
@@ -2457,6 +2497,39 @@ void IncomingUDP(){
       shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[3]);    // bank1
       shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[2]);    // bank0
       digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
+    }
+
+    // RELAY BROADCAST - STORAGE IP by received ID in 'DetectedRemoteRelay' array (rows = Relay ID)
+    if (packetBuffer[0] == 'b' && packetBuffer[1] == ':' && packetBuffer[2] == 's' && packetBuffer[4] == ';'){
+      IPAddress TmpAddr = UdpCommand.remoteIP();
+      DetectedRemoteRelay [(int)packetBuffer[3] - 48] [0]=TmpAddr[0];     // Relay IP addres storage to array
+      DetectedRemoteRelay [(int)packetBuffer[3] - 48] [1]=TmpAddr[1];     // (int)packetBuffer[3] - 48 = convert char number to DEC
+      DetectedRemoteRelay [(int)packetBuffer[3] - 48] [2]=TmpAddr[2];
+      DetectedRemoteRelay [(int)packetBuffer[3] - 48] [3]=TmpAddr[3];
+      DetectedRemoteRelay [(int)packetBuffer[3] - 48] [4]=UdpCommand.remotePort();
+
+      // Serial2.println();
+      // Serial2.print("RX b:r");
+      // Serial2.print(packetBuffer[3]);
+      // Serial2.println(";");
+      //
+      // Serial2.print(packetBuffer[3], DEC);
+      // Serial2.println(" ");
+      // Serial2.println((int)packetBuffer[3] - 48, DEC);
+      //
+      // for (i = 0; i < 10; i++) {
+      //   Serial2.print(i);
+      //   Serial2.print("  ");
+      //   Serial2.print(DetectedRemoteRelay [i] [0]);
+      //   Serial2.print(".");
+      //   Serial2.print(DetectedRemoteRelay [i] [1]);
+      //   Serial2.print(".");
+      //   Serial2.print(DetectedRemoteRelay [i] [2]);
+      //   Serial2.print(".");
+      //   Serial2.print(DetectedRemoteRelay [i] [3]);
+      //   Serial2.print(":");
+      //   Serial2.println(DetectedRemoteRelay [i] [4]);
+      // }
     }
 
     // INTERLOCK
@@ -2501,6 +2574,28 @@ void IncomingUDP(){
 //    lcd.print("      ");
   memset(packetBuffer, 0, sizeof(packetBuffer));   // Clear contents of Buffer
   }
+  attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
+}
+
+void SendBroadcastUdp(){
+  detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
+  BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
+
+  UdpCommand.beginPacket(BroadcastIP, BroadcastPort);   // Send to IP and port from recived UDP command
+  // UdpCommand.beginMulticast(UdpCommand.BroadcastIP(), BroadcastPort, ETH.localIP()).
+    UdpCommand.print("b:o");
+    UdpCommand.print(NETWORK_ID);
+    UdpCommand.print(";");
+  UdpCommand.endPacket();
+
+  // Serial2.print("TX Broadcast ");
+  // Serial2.print(BroadcastIP);
+  // Serial2.print(":");
+  // Serial2.print(BroadcastPort);
+  // Serial2.print("   ms ");
+  // Serial2.println(Timeout[8][0]);
+
+  Timeout[8][0] = millis();                      // set time mark
   attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
 }
 
