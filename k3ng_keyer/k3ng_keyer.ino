@@ -1300,8 +1300,8 @@ unsigned long automatic_sending_interruption_time = 0;
 #define VOLTAGE_MEASURE_ADJUST 0.3    // ofset for precise adjust voltage measure
 boolean ETHERNET_MODULE = 1;          // enable ETHERNET module (must be installed) EXPERIMENTAL
 boolean ACC_KEYBOARD    = 1;          // Shift in/out register via ACC
-boolean RemoteRelay     = 1;          // IP controled remote remoteRelay
-boolean KeyboardAnswLed = 1;          // Keyboard Led shown answered UDP packet from IP RemoteRelay
+boolean RemoteSwitch    = 1;          // IP controled remote RemoteSwitch
+boolean KeyboardAnswLed = 1;          // Keyboard Led shown answered UDP packet from IP RemoteSwitch
                                       // + latency measure. Disable set localy
 
 // FEATURES AND OPTIONS
@@ -1309,13 +1309,13 @@ boolean K3NG_KEYER      = 1;          // enable CW keyer
 boolean FSK_TX          = 1;          // enable RTTY keying
 boolean FSK_RX          = 0;          // enable RTTY decoder - EXPERIMENTAL!
 
+int UNIQUE_ID           = 0;          // must be unique in network - every Open Interface own different number
+
 boolean MQTT_ENABLE     = 0;          // enable public to MQTT broker
-String MQTT_PATH        = "oi3";      // Identificator your device in MQTT
 int MQTT_PORT           = 1883;       // MQTT broker PORT
 boolean MQTT_LOGIN      = 1;          // enable MQTT broker login
 char MQTT_USER          = 'login';      // MQTT broker user login
 char MQTT_PASS          = 'passwd';         // MQTT broker password
-int NETWORK_ID          = 0;
 int UDP_RTTY_PORT       = 89;         // UDP port listen to RTTY character (FSK mode)
 int UDP_COMMAND_PORT    = 88;         // UDP port listen to command
 
@@ -1323,7 +1323,7 @@ int UDP_COMMAND_PORT    = 88;         // UDP port listen to command
                                       // i:#;   - INTERLOCK # 0/1 (on/off)
                                       // p:#:%; - PTT # 0/1 (on/off), % 0-3 (0=PTTPA, 1=PTT1, 2=PTT2, 3=PTT3)
                                       // s:###; - ### Switch0-2 binary for set LED on keyboard (if installed) and measure latency
-                                      //          maybe used also as local relay
+                                      //          maybe used also as local Switch
 
                                       // b:s#;  - Broadcast identify packet
                                       //        - s = Switch board, # = ID
@@ -1418,12 +1418,12 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON L
   EthernetUDP UdpRtty;
   IPAddress BroadcastIP(0, 0, 0, 0);        // Broadcast IP address
   int BroadcastPort       = 88;             // destination broadcast packet port
-  IPAddress RemoteRelayIP(0, 0, 0, 0);      // remote UDP IP relay - set from UDP DetectRemote array
-  int RemoteRelayPort     = 0;             // remote UDP IP relay port
-  byte DetectedRemoteRelay[10][5];          // detect by RX broadcast packet - storage by ID (ID=rows)
-  long RemoteRelayLatency[2];               // start, stop mark
-  byte TxUdpBuffer[] = {B01110011, B00111010, 0, 0, 0, B00111011}; // s, :, Bank0, Bank1, Bank2, ;
-  // r=B01110010
+  IPAddress RemoteSwIP(0, 0, 0, 0);         // remote UDP IP switch - set from UDP DetectRemote array
+  int RemoteSwPort         = 0;             // remote UDP IP switch port
+  byte DetectedRemoteSw[10][5];             // detect by RX broadcast packet - storage by ID (ID=rows)
+  long RemoteSwLatency[2];                  // start, stop mark
+  byte RemoteSwLatencyAnsw = 1;             // answer detect
+  byte TxUdpBuffer[10];
 // }
 
 // microSD
@@ -1619,10 +1619,10 @@ char* MenuTree[22]= { // [radky][sloupce]
   "PTTlead",         // 15
   "PTTtail",         // 16
   "",                // 17  MODE fullname
-  "S0:",             // 18  Switch bank0
-  "S1:",             // 19  Switch bank1
-  "S2:",             // 20  Switch bank2
-  "Lat ",             // 21 Last Switch changed latency [us]
+  "A",               // 18  Switch bankA
+  "B",               // 19  Switch bankB
+  "C",               // 20  Switch bankC
+  "Lat ",            // 21  Last Switch changed latency [ms]
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -2045,44 +2045,46 @@ void AccKeyboardShift(){    // run from interrupt
   // for (i = 0; i < 10; i++) {
   //   Serial2.print(i);
   //   Serial2.print("  ");
-  //   Serial2.print(DetectedRemoteRelay [i] [0]);
+  //   Serial2.print(DetectedRemoteSw [i] [0]);
   //   Serial2.print(".");
-  //   Serial2.print(DetectedRemoteRelay [i] [1]);
+  //   Serial2.print(DetectedRemoteSw [i] [1]);
   //   Serial2.print(".");
-  //   Serial2.print(DetectedRemoteRelay [i] [2]);
+  //   Serial2.print(DetectedRemoteSw [i] [2]);
   //   Serial2.print(".");
-  //   Serial2.print(DetectedRemoteRelay [i] [3]);
+  //   Serial2.print(DetectedRemoteSw [i] [3]);
   //   Serial2.print(":");
-  //   Serial2.println(DetectedRemoteRelay [i] [4]);
+  //   Serial2.println(DetectedRemoteSw [i] [4]);
   // }
 
   // Serial2.print("  ");
-  // Serial2.print(RemoteRelayIP);
+  // Serial2.print(RemoteSwIP);
   // Serial2.print(":");
-  // Serial2.print(RemoteRelayPort);
+  // Serial2.print(RemoteSwPort);
   // Serial2.print("  ->  ");
 
   // SET IP:PORT from array by relay ID (id = rows)
-  // RemoteRelayIP = DetectedRemoteRelay[packetBuffer[3]];
-  // RemoteRelayPort = DetectedRemoteRelay[packetBuffer[3]][4];
-  RemoteRelayIP = DetectedRemoteRelay[BAND];
-  RemoteRelayPort = DetectedRemoteRelay[BAND][4];
+  // RemoteSwIP = DetectedRemoteSw[packetBuffer[3]];
+  // RemoteSwPort = DetectedRemoteSw[packetBuffer[3]][4];
+  RemoteSwIP = DetectedRemoteSw[BAND];
+  RemoteSwPort = DetectedRemoteSw[BAND][4];
 
-  // Serial2.print(RemoteRelayIP);
+  // Serial2.print(RemoteSwIP);
   // Serial2.print(":");
-  // Serial2.println(RemoteRelayPort);
+  // Serial2.println(RemoteSwPort);
 
-
-
-  // UDP send to RELAY
-  if(ETHERNET_MODULE == 1 && RemoteRelay == 1){
-    TxUdpBuffer[2]=rxShiftInButton[0];    // set buffer
+  // UDP send to Switch
+  if(ETHERNET_MODULE == 1 && RemoteSwitch == 1){
+    TxUdpBuffer[0] = B01110011;         // s
+    TxUdpBuffer[1] = B00111010;         // :
+    TxUdpBuffer[2]=rxShiftInButton[0];  // set buffer
     TxUdpBuffer[3]=rxShiftInButton[1];
     TxUdpBuffer[4]=rxShiftInButton[2];
-    UdpCommand.beginPacket(RemoteRelayIP, RemoteRelayPort);
+    TxUdpBuffer[5] = B00111011;         // ;
+    UdpCommand.beginPacket(RemoteSwIP, RemoteSwPort);
       UdpCommand.write(TxUdpBuffer, sizeof(TxUdpBuffer));   // send buffer
-      RemoteRelayLatency[0] = millis(); // set START time mark UDP command latency
+      RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
     UdpCommand.endPacket();
+    RemoteSwLatencyAnsw = 0;   // send command, wait to answer
   }
 
   // MQTT send
@@ -2140,8 +2142,8 @@ void readSDSettings(){
         FSK_TX = (boolean)settingValue.toInt();
       }else if(settingName == "FSK_RX"){
         FSK_RX = (boolean)settingValue.toInt();
-      }else if(settingName == "MQTT_PATH"){
-        MQTT_PATH = settingValue;
+      }else if(settingName == "UNIQUE_ID"){
+        // UNIQUE_ID = settingValue;
       }else if(settingName == "MQTT_PORT"){
         MQTT_PORT = settingValue.toInt();
       }else if(settingName == "MQTT_LOGIN"){
@@ -2309,43 +2311,43 @@ void AfterMQTTconnect(){
         IPAddress IPlocalAddr = Ethernet.localIP();                           // get
         String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
         IPlocalAddrString.toCharArray( mqttTX, 50 );                          // to array
-        String path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/ip";
+        String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/ip";
         path2.toCharArray( mqttPath, 20 );
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/pttlead";
+        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/pttlead";
         path2.toCharArray( mqttPath, 20 );
         String(PTTlead).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/ptttail";
+        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/ptttail";
         path2.toCharArray( mqttPath, 20 );
         String(PTTtail).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/seqlead";
+        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/seqlead";
         path2.toCharArray( mqttPath, 20 );
         String(SEQUENCERlead).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/seqtail";
+        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/seqtail";
         path2.toCharArray( mqttPath, 20 );
         String(SEQUENCERtail).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/palead";
+        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/palead";
         path2.toCharArray( mqttPath, 20 );
         String(PAlead).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/patail";
+        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/patail";
         path2.toCharArray( mqttPath, 20 );
         String(PAtail).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
   }
 }
 
-void OpenInterfaceInterlock(){      // <-------------- move to INTERRUPT?
+void OpenInterfaceInterlock(){      // <-------------- move to hw INTERRUPT?
       if (digitalRead(INTERLOCK) == ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
         ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
         if(ptt_interlock_active == 1){
@@ -2366,6 +2368,8 @@ void ptt_high(int PTToutput){
     }
     if(SequencerLevel == 5){
       digitalWrite (PTTPA, HIGH);      // PTT-PA
+      SendBroadcastUdpPTT(1);
+      MqttPub("ptt", 0, 1);
       delay(PAlead);
       SequencerLevel = 4;
     }
@@ -2388,7 +2392,6 @@ void ptt_high(int PTToutput){
         }
       }
       delay(PTTlead);
-        MqttPub("ptt", 0, 1);
     }
   }
 }
@@ -2459,7 +2462,8 @@ void check_ptt_low(){
         digitalWrite (SEQUENCER, LOW);
         SequencerLevel = 0;
         PTT_tail_timeout[3][0] = millis(); // set time mark PA
-          MqttPub("ptt", 0, 0);
+        SendBroadcastUdpPTT(0);
+        MqttPub("ptt", 0, 0);
       }
     break;
     }
@@ -2488,25 +2492,26 @@ void IncomingUDP(){
   if (UDPpacketSize){
     UdpCommand.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
 
-    // RELAY ANSWER > SET LED - Bank0-2
+    // Switch ANSWER > SET LED - Bank0-2
     if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && packetBuffer[0] == 's' && packetBuffer[1] == ':'){
-      RemoteRelayLatency[1] = (millis()-RemoteRelayLatency[0])/2; // set latency (half path in ms us/2/1000)
-
+      RemoteSwLatency[1] = (millis()-RemoteSwLatency[0])/2; // set latency (half path in ms us/2/1000)
+      RemoteSwLatencyAnsw = 1;           // answer packet received
       digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
       // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[4]);    // bank2
       shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[3]);    // bank1
       shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[2]);    // bank0
       digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
+
     }
 
-    // RELAY BROADCAST - STORAGE IP by received ID in 'DetectedRemoteRelay' array (rows = Relay ID)
+    // Switch BROADCAST - STORAGE IP by received ID in 'DetectedRemoteSw' array (rows = Switch ID)
     if (packetBuffer[0] == 'b' && packetBuffer[1] == ':' && packetBuffer[2] == 's' && packetBuffer[4] == ';'){
       IPAddress TmpAddr = UdpCommand.remoteIP();
-      DetectedRemoteRelay [(int)packetBuffer[3] - 48] [0]=TmpAddr[0];     // Relay IP addres storage to array
-      DetectedRemoteRelay [(int)packetBuffer[3] - 48] [1]=TmpAddr[1];     // (int)packetBuffer[3] - 48 = convert char number to DEC
-      DetectedRemoteRelay [(int)packetBuffer[3] - 48] [2]=TmpAddr[2];
-      DetectedRemoteRelay [(int)packetBuffer[3] - 48] [3]=TmpAddr[3];
-      DetectedRemoteRelay [(int)packetBuffer[3] - 48] [4]=UdpCommand.remotePort();
+      DetectedRemoteSw [(int)packetBuffer[3] - 48] [0]=TmpAddr[0];     // Switch IP addres storage to array
+      DetectedRemoteSw [(int)packetBuffer[3] - 48] [1]=TmpAddr[1];     // (int)packetBuffer[3] - 48 = convert char number to DEC
+      DetectedRemoteSw [(int)packetBuffer[3] - 48] [2]=TmpAddr[2];
+      DetectedRemoteSw [(int)packetBuffer[3] - 48] [3]=TmpAddr[3];
+      DetectedRemoteSw [(int)packetBuffer[3] - 48] [4]=UdpCommand.remotePort();
 
       // Serial2.println();
       // Serial2.print("RX b:r");
@@ -2520,15 +2525,15 @@ void IncomingUDP(){
       // for (i = 0; i < 10; i++) {
       //   Serial2.print(i);
       //   Serial2.print("  ");
-      //   Serial2.print(DetectedRemoteRelay [i] [0]);
+      //   Serial2.print(DetectedRemoteSw [i] [0]);
       //   Serial2.print(".");
-      //   Serial2.print(DetectedRemoteRelay [i] [1]);
+      //   Serial2.print(DetectedRemoteSw [i] [1]);
       //   Serial2.print(".");
-      //   Serial2.print(DetectedRemoteRelay [i] [2]);
+      //   Serial2.print(DetectedRemoteSw [i] [2]);
       //   Serial2.print(".");
-      //   Serial2.print(DetectedRemoteRelay [i] [3]);
+      //   Serial2.print(DetectedRemoteSw [i] [3]);
       //   Serial2.print(":");
-      //   Serial2.println(DetectedRemoteRelay [i] [4]);
+      //   Serial2.println(DetectedRemoteSw [i] [4]);
       // }
     }
 
@@ -2577,6 +2582,23 @@ void IncomingUDP(){
   attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
 }
 
+void SendBroadcastUdpPTT(int status){
+  detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
+  BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
+  TxUdpBuffer[0] = B01100010;         // b  - broadcast
+  TxUdpBuffer[1] = B00111010;         // :
+  TxUdpBuffer[2] = B01101111;         // o  - open interface device
+  TxUdpBuffer[3] = UNIQUE_ID;         // ID number
+  TxUdpBuffer[4] = BAND;              // Band number
+  TxUdpBuffer[5] = B01110000;         // p  - PTT
+  TxUdpBuffer[6] = status;
+  TxUdpBuffer[7] = B00111011;         // ;
+  UdpCommand.beginPacket(BroadcastIP, BroadcastPort);   // Send to IP and port from recived UDP command
+    UdpCommand.write(TxUdpBuffer, sizeof(TxUdpBuffer));   // send buffer
+  UdpCommand.endPacket();
+  attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
+}
+
 void SendBroadcastUdp(){
   detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
   BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
@@ -2584,7 +2606,7 @@ void SendBroadcastUdp(){
   UdpCommand.beginPacket(BroadcastIP, BroadcastPort);   // Send to IP and port from recived UDP command
   // UdpCommand.beginMulticast(UdpCommand.BroadcastIP(), BroadcastPort, ETH.localIP()).
     UdpCommand.print("b:o");
-    UdpCommand.print(NETWORK_ID);
+    UdpCommand.print(UNIQUE_ID);
     UdpCommand.print(";");
   UdpCommand.endPacket();
 
@@ -2602,7 +2624,7 @@ void SendBroadcastUdp(){
 void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
   if(ETHERNET_MODULE == true && MQTT_ENABLE == true && MQTT_LOGIN==true){
     if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
-      String path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/" + path;
+      String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       if (value != 0){
         String(value).toCharArray( mqttTX, 50 );
@@ -2613,7 +2635,7 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
     }
   }else{
     if (client.connect("arduinoClient")) {
-      String path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/" + path;
+      String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       if (value != 0){
         String(value).toCharArray( mqttTX, 50 );
@@ -2628,14 +2650,14 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
 void MqttPubString(String path, String character){
   if(ETHERNET_MODULE == true && MQTT_ENABLE == true && MQTT_LOGIN==true){
     if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
-      String path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/" + path;
+      String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       character.toCharArray( mqttTX, 50 );
       client.publish(mqttPath, mqttTX);
     }
   }else{
     if (client.connect("arduinoClient")) {
-      String path2 = String(YOUR_CALL) + "/" + String(MQTT_PATH) + "/" + path;
+      String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       character.toCharArray( mqttTX, 50 );
       client.publish(mqttPath, mqttTX);
@@ -2868,52 +2890,103 @@ void MenuToLCD(int nr){
       CulumnPosition=CulumnPosition+String(modeLCD[Loop[0]][1]).length()-1;
     break;
     }
-    case 18:{ // Buttons bank 0
+    case 18:{ // Buttons bank A
       lcd.setCursor(CulumnPosition-1, 1);
-      if(ACC_KEYBOARD == 1){
-        lcd.print(PrintByte(rxShiftInButton[0]));
-        CulumnPosition=CulumnPosition+String(rxShiftInButton[0]).length()-1;
+      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP for this band
+        if(ACC_KEYBOARD == 1){                // if enable ACC shift in buttons
+          if(RemoteSwLatencyAnsw==1){                // if receive answer packet
+            lcd.print(BAND);
+            lcd.print(":");
+            lcd.print(PrintByte(rxShiftInButton[0]));
+            CulumnPosition=CulumnPosition+String(rxShiftInButton[0]).length()-1;
+          }else{
+            lcd.print(BAND);
+            lcd.print(": OFFline");
+            CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
+          }
+        }else{
+          lcd.print(" Disable");
+          CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+        }
       }else{
-        lcd.print("ExtButt OFF");
-        CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+        lcd.print(BAND);
+        lcd.print(":   n/a");
+        CulumnPosition=CulumnPosition+String(" :   n/a").length()-1;
       }
     break;
     }
-    case 19:{ // Buttons bank 1
+    case 19:{ // Buttons bank B
       lcd.setCursor(CulumnPosition-1, 1);
-      if(ACC_KEYBOARD == 1){
-        lcd.print(PrintByte(rxShiftInButton[1]));
-        CulumnPosition=CulumnPosition+String(rxShiftInButton[1]).length()-1;
+      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP for this band
+        if(ACC_KEYBOARD == 1){
+          if(RemoteSwLatencyAnsw==1){                // if receive answer packet
+            lcd.print(BAND);
+            lcd.print(":");
+            lcd.print(PrintByte(rxShiftInButton[1]));
+            CulumnPosition=CulumnPosition+String(rxShiftInButton[1]).length()-1;
+          }else{
+            lcd.print(BAND);
+            lcd.print(": OFFline");
+            CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
+          }
+        }else{
+          lcd.print(" Disable");
+          CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+        }
       }else{
-        lcd.print("ExtButt OFF");
-        CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+        lcd.print(BAND);
+        lcd.print(":   n/a");
+        CulumnPosition=CulumnPosition+String(" :   n/a").length()-1;
       }
     break;
     }
-    case 20:{ // Buttons bank 2
+    case 20:{ // Buttons bank C
       lcd.setCursor(CulumnPosition-1, 1);
-      if(ACC_KEYBOARD == 1){
-        lcd.print(PrintByte(rxShiftInButton[2]));
-        CulumnPosition=CulumnPosition+String(rxShiftInButton[2]).length()-1;
+      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP for this band
+        if(ACC_KEYBOARD == 1){
+          if(RemoteSwLatencyAnsw==1){                // if receive answer packet
+            lcd.print(BAND);
+            lcd.print(":");
+            lcd.print(PrintByte(rxShiftInButton[2]));
+            CulumnPosition=CulumnPosition+String(rxShiftInButton[2]).length()-1;
+          }else{
+            lcd.print(BAND);
+            lcd.print(": OFFline");
+            CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
+          }
+        }else{
+          lcd.print(" Disable");
+          CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+        }
       }else{
-        lcd.print("ExtButt OFF");
-        CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+        lcd.print(BAND);
+        lcd.print(":   n/a");
+        CulumnPosition=CulumnPosition+String(" :   n/a").length()-1;
       }
     break;
     }
-    case 21:{ // Last relay command latency measure
+    case 21:{ // Last Switch command latency measure
       lcd.setCursor(CulumnPosition-1, 1);
-      if(ACC_KEYBOARD == 1 && KeyboardAnswLed == 1){
-        lcd.print(RemoteRelayLatency[1]);
-        lcd.print("ms");
-        CulumnPosition=CulumnPosition+String(RemoteRelayLatency[1]).length()-1;
+      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP for this band
+        if(ACC_KEYBOARD == 1 && KeyboardAnswLed == 1){
+          if(RemoteSwLatencyAnsw==1){                // if receive answer packet
+            lcd.print(RemoteSwLatency[1]);
+            lcd.print("ms");
+            CulumnPosition=CulumnPosition+String(RemoteSwLatency[1]).length()-1;
+          }else{
+            lcd.print("OFFline");
+            CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
+          }
+        }else{
+          lcd.print(" Disable");
+          CulumnPosition=CulumnPosition+String("RelAnsw OFF").length()-1;
+        }
       }else{
-        lcd.print("RelAnsw OFF");
-        CulumnPosition=CulumnPosition+String("RelAnsw OFF").length()-1;
+        lcd.print("  n/a");
+        CulumnPosition=CulumnPosition+String("  n/a").length()-1;
       }
     break;
     }
-
 
   }
   if(StatusArray[2] == LOW){        // Mode
