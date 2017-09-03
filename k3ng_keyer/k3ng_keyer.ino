@@ -1421,8 +1421,9 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON L
   IPAddress RemoteSwIP(0, 0, 0, 0);         // remote UDP IP switch - set from UDP DetectRemote array
   int RemoteSwPort         = 0;             // remote UDP IP switch port
   byte DetectedRemoteSw[10][5];             // detect by RX broadcast packet - storage by ID (ID=rows)
+  int BandDecoderChange    = 0;             // If band change, send query packet to Remote IP switch
   long RemoteSwLatency[2];                  // start, stop mark
-  byte RemoteSwLatencyAnsw = 1;             // answer detect
+  byte RemoteSwLatencyAnsw = 1;             // answer (offline) detect
   byte TxUdpBuffer[10];
 // }
 
@@ -1878,7 +1879,7 @@ void setup()
     lcd.print(F(" micro SD card  "));
     lcd.setCursor(0, 1);
     lcd.print(F(" not present   "));
-    delay(1000);
+    delay(500);
   }else{
     if (!SD.begin(SDCS)) {
       lcd.print(F("Init SDcard fail"));
@@ -1994,6 +1995,7 @@ void loop() {
     if(SequencerLevel != 0){ // if Sequencer on
       check_ptt_low();
     }
+    RemoteSwQuery();
     // if (millis() - Timeout[8][0] > (Timeout[8][1])){
     //   SendBroadcastUdp();
     // }
@@ -2003,104 +2005,106 @@ void loop() {
 // http://www.catonmat.net/blog/low-level-bit-hacks-you-absolutely-must-know/
 
 void AccKeyboardShift(){    // run from interrupt
-  digitalWrite(ShiftInLatchPin,1);   //Set latch pin to 1 to get recent data into the CD4021
-  delayMicroseconds(15);
-  digitalWrite(ShiftInLatchPin,0);     //Set latch pin to 0 to get data from the CD4021
-  for (int i=1; i<17; i++){                // 16 = two bank
-    digitalWrite(ShiftInClockPin, 0);
-    rxShiftInRead = digitalRead(ShiftInDataPin);
-      switch (rxShiftInRead) {
-        case 1:
-            switch (i) {
-              case 1: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<7); break;  // invert n-th bit
-              case 2: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<6); break;
-              case 3: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<5); break;
-              case 4: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<4); break;
-              case 5: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<3); break;
-              case 6: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<2); break;
-              case 7: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<1); break;
-              case 8: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<0); break;
-              case  9: rxShiftInButton[1] = B10000000; break;                   // set n-th bit
-              case 10: rxShiftInButton[1] = B01000000; break;
-              case 11: rxShiftInButton[1] = B00100000; break;
-              case 12: rxShiftInButton[1] = B00010000; break;
-              case 13: rxShiftInButton[1] = B00001000; break;
-              case 14: rxShiftInButton[1] = B00000100; break;
-              case 15: rxShiftInButton[1] = B00000010; break;
-              case 16: rxShiftInButton[1] = B00000001; break;
-              default:
-                // if nothing else matches, do the default
-              break;
-            }
-          break;
-        case 0: break;
-      }
-      digitalWrite(ShiftInClockPin, 1);
-  }
+  if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP Switch for this band
+    digitalWrite(ShiftInLatchPin,1);   //Set latch pin to 1 to get recent data into the CD4021
+    delayMicroseconds(15);
+    digitalWrite(ShiftInLatchPin,0);     //Set latch pin to 0 to get data from the CD4021
+    for (int i=1; i<17; i++){                // 16 = two bank
+      digitalWrite(ShiftInClockPin, 0);
+      rxShiftInRead = digitalRead(ShiftInDataPin);
+        switch (rxShiftInRead) {
+          case 1:
+              switch (i) {
+                case 1: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<7); break;  // invert n-th bit
+                case 2: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<6); break;
+                case 3: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<5); break;
+                case 4: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<4); break;
+                case 5: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<3); break;
+                case 6: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<2); break;
+                case 7: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<1); break;
+                case 8: rxShiftInButton[0] = rxShiftInButton[0] ^ (1<<0); break;
+                case  9: rxShiftInButton[1] = B10000000; break;                   // set n-th bit
+                case 10: rxShiftInButton[1] = B01000000; break;
+                case 11: rxShiftInButton[1] = B00100000; break;
+                case 12: rxShiftInButton[1] = B00010000; break;
+                case 13: rxShiftInButton[1] = B00001000; break;
+                case 14: rxShiftInButton[1] = B00000100; break;
+                case 15: rxShiftInButton[1] = B00000010; break;
+                case 16: rxShiftInButton[1] = B00000001; break;
+                default:
+                  // if nothing else matches, do the default
+                break;
+              }
+            break;
+          case 0: break;
+        }
+        digitalWrite(ShiftInClockPin, 1);
+    }
 
-  // Serial2.println();
-  // Serial2.print("BAND: ");
-  // Serial2.println(BAND);
+    // Serial2.println();
+    // Serial2.print("BAND: ");
+    // Serial2.println(BAND);
 
-  // for (i = 0; i < 10; i++) {
-  //   Serial2.print(i);
-  //   Serial2.print("  ");
-  //   Serial2.print(DetectedRemoteSw [i] [0]);
-  //   Serial2.print(".");
-  //   Serial2.print(DetectedRemoteSw [i] [1]);
-  //   Serial2.print(".");
-  //   Serial2.print(DetectedRemoteSw [i] [2]);
-  //   Serial2.print(".");
-  //   Serial2.print(DetectedRemoteSw [i] [3]);
-  //   Serial2.print(":");
-  //   Serial2.println(DetectedRemoteSw [i] [4]);
-  // }
+    // for (i = 0; i < 10; i++) {
+    //   Serial2.print(i);
+    //   Serial2.print("  ");
+    //   Serial2.print(DetectedRemoteSw [i] [0]);
+    //   Serial2.print(".");
+    //   Serial2.print(DetectedRemoteSw [i] [1]);
+    //   Serial2.print(".");
+    //   Serial2.print(DetectedRemoteSw [i] [2]);
+    //   Serial2.print(".");
+    //   Serial2.print(DetectedRemoteSw [i] [3]);
+    //   Serial2.print(":");
+    //   Serial2.println(DetectedRemoteSw [i] [4]);
+    // }
 
-  // Serial2.print("  ");
-  // Serial2.print(RemoteSwIP);
-  // Serial2.print(":");
-  // Serial2.print(RemoteSwPort);
-  // Serial2.print("  ->  ");
+    // Serial2.print("  ");
+    // Serial2.print(RemoteSwIP);
+    // Serial2.print(":");
+    // Serial2.print(RemoteSwPort);
+    // Serial2.print("  ->  ");
 
-  // SET IP:PORT from array by relay ID (id = rows)
-  // RemoteSwIP = DetectedRemoteSw[packetBuffer[3]];
-  // RemoteSwPort = DetectedRemoteSw[packetBuffer[3]][4];
-  RemoteSwIP = DetectedRemoteSw[BAND];
-  RemoteSwPort = DetectedRemoteSw[BAND][4];
+    // SET IP:PORT from array by relay ID (id = rows)
+    // RemoteSwIP = DetectedRemoteSw[packetBuffer[3]];
+    // RemoteSwPort = DetectedRemoteSw[packetBuffer[3]][4];
+    RemoteSwIP = DetectedRemoteSw[BAND];
+    RemoteSwPort = DetectedRemoteSw[BAND][4];
 
-  // Serial2.print(RemoteSwIP);
-  // Serial2.print(":");
-  // Serial2.println(RemoteSwPort);
+    // Serial2.print(RemoteSwIP);
+    // Serial2.print(":");
+    // Serial2.println(RemoteSwPort);
 
-  // UDP send to Switch
-  if(ETHERNET_MODULE == 1 && RemoteSwitch == 1){
-    TxUdpBuffer[0] = B01110011;         // s
-    TxUdpBuffer[1] = B00111010;         // :
-    TxUdpBuffer[2]=rxShiftInButton[0];  // set buffer
-    TxUdpBuffer[3]=rxShiftInButton[1];
-    TxUdpBuffer[4]=rxShiftInButton[2];
-    TxUdpBuffer[5] = B00111011;         // ;
-    UdpCommand.beginPacket(RemoteSwIP, RemoteSwPort);
-      UdpCommand.write(TxUdpBuffer, sizeof(TxUdpBuffer));   // send buffer
-      RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
-    UdpCommand.endPacket();
-    RemoteSwLatencyAnsw = 0;   // send command, wait to answer
-  }
+    // UDP send to Switch
+    if(ETHERNET_MODULE == 1 && RemoteSwitch == 1){
+      TxUdpBuffer[0] = B01110011;         // s
+      TxUdpBuffer[1] = B00111010;         // :
+      TxUdpBuffer[2] = rxShiftInButton[0];  // set buffer
+      TxUdpBuffer[3] = rxShiftInButton[1];
+      TxUdpBuffer[4] = rxShiftInButton[2];
+      TxUdpBuffer[5] = B00111011;         // ;
+      UdpCommand.beginPacket(RemoteSwIP, RemoteSwPort);
+        UdpCommand.write(TxUdpBuffer, sizeof(TxUdpBuffer));   // send buffer
+        RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
+      UdpCommand.endPacket();
+      RemoteSwLatencyAnsw = 0;   // send command, wait to answer
+    }
 
-  // MQTT send
-  if (MQTT_ENABLE==1){
-    MqttPub("KeybBank0", 0, rxShiftInButton[0]);
-    MqttPub("KeybBank1", 0, rxShiftInButton[1]);
-    // MqttPub("KeybBank2", 0, rxShiftInButton[2]);   // bank2 disable
-  }
+    // MQTT send
+    if (MQTT_ENABLE==1){
+      MqttPub("KeybBank0", 0, rxShiftInButton[0]);
+      MqttPub("KeybBank1", 0, rxShiftInButton[1]);
+      // MqttPub("KeybBank2", 0, rxShiftInButton[2]);   // bank2 disable
+    }
 
-  // SHIFT OUT
-  if(KeyboardAnswLed==0){
-    digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
-    // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[2]);    // bank2
-    shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[1]);    // bank1
-    shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[0]);    // bank0
-    digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
+    // SHIFT OUT
+    if(KeyboardAnswLed==0){
+      digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
+      // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[2]);    // bank2
+      shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[1]);    // bank1
+      shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[0]);    // bank0
+      digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
+    }
   }
 }
 
@@ -2470,6 +2474,37 @@ void check_ptt_low(){
   }
 }
 
+// If BAND change, send query packet to Remote IP switch
+void RemoteSwQuery(){
+  if(RemoteSwitch == 1){
+    if(BAND != BandDecoderChange){    // if band change, send query udp packet
+      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP Switch for this band
+        RemoteSwIP = DetectedRemoteSw[BAND];
+        RemoteSwPort = DetectedRemoteSw[BAND][4];
+        // UDP send to Switch
+        TxUdpBuffer[0] = B01110011;         // s
+        TxUdpBuffer[1] = B00111010;         // :
+        TxUdpBuffer[2] = B01110001;         // q
+        TxUdpBuffer[3] = B00111011;         // ;
+        TxUdpBuffer[4] = 0;
+        TxUdpBuffer[5] = 0;
+        UdpCommand.beginPacket(RemoteSwIP, RemoteSwPort);
+          UdpCommand.write(TxUdpBuffer, sizeof(TxUdpBuffer));   // send buffer
+          RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
+        UdpCommand.endPacket();
+        RemoteSwLatencyAnsw = 0;   // send command, wait to answer
+      }else{      // if IP sw n/a on this band, clear LED keyboard
+        digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
+        // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, B00000000);    // bankC
+        shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, B00000000);    // bankB
+        shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, B00000000);    // bankA
+        digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
+      }
+      BandDecoderChange = BAND;
+    }
+  }
+}
+
 // Incoming UDP commands
 void IncomingUDP(){
   // detachInterrupt because this interrupt worked with ethernet also
@@ -2496,10 +2531,16 @@ void IncomingUDP(){
     if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && packetBuffer[0] == 's' && packetBuffer[1] == ':'){
       RemoteSwLatency[1] = (millis()-RemoteSwLatency[0])/2; // set latency (half path in ms us/2/1000)
       RemoteSwLatencyAnsw = 1;           // answer packet received
+
+      // need if RX answer from band change query
+      rxShiftInButton[0] = packetBuffer[2];
+      rxShiftInButton[1] = packetBuffer[3];
+      rxShiftInButton[2] = packetBuffer[4];
+
       digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
-      // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[4]);    // bank2
-      shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[3]);    // bank1
-      shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[2]);    // bank0
+      // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[4]);    // bankC
+      shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[3]);    // bankB
+      shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[2]);    // bankA
       digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
 
     }
@@ -2892,7 +2933,7 @@ void MenuToLCD(int nr){
     }
     case 18:{ // Buttons bank A
       lcd.setCursor(CulumnPosition-1, 1);
-      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP for this band
+      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP Switch for this band
         if(ACC_KEYBOARD == 1){                // if enable ACC shift in buttons
           if(RemoteSwLatencyAnsw==1){                // if receive answer packet
             lcd.print(BAND);
