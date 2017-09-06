@@ -1308,14 +1308,14 @@ boolean KeyboardAnswLed = 1;          // Keyboard Led shown answered UDP packet 
 boolean K3NG_KEYER      = 1;          // enable CW keyer
 boolean FSK_TX          = 1;          // enable RTTY keying
 boolean FSK_RX          = 0;          // enable RTTY decoder - EXPERIMENTAL!
-
-int UNIQUE_ID           = 0;          // must be unique in network - every Open Interface own different number
-
+//=============================
+byte UNIQUE_ID          = 0x01;       // [hex] must be unique in network - every Open Interface own different number
+//=============================
 boolean MQTT_ENABLE     = 0;          // enable public to MQTT broker
 int MQTT_PORT           = 1883;       // MQTT broker PORT
 boolean MQTT_LOGIN      = 1;          // enable MQTT broker login
-char MQTT_USER          = 'login';      // MQTT broker user login
-char MQTT_PASS          = 'passwd';         // MQTT broker password
+char MQTT_USER          = 'login';    // MQTT broker user login
+char MQTT_PASS          = 'passwd';   // MQTT broker password
 int UDP_RTTY_PORT       = 89;         // UDP port listen to RTTY character (FSK mode)
 int UDP_COMMAND_PORT    = 88;         // UDP port listen to command
 
@@ -1397,7 +1397,8 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON L
   #include <Ethernet2.h> // and disable on line #749
   #include <EthernetUdp2.h>
   #include <PubSubClient.h>
-  byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEE};
+  byte LastMac = 0xFF - UNIQUE_ID;
+  byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, LastMac};
   boolean USE_DHCP = 1;                    // Uncoment to Enable DHCP
   IPAddress ip(192, 168, 1, 220);         // IP
   IPAddress gateway(192, 168, 1, 1);    // GATE
@@ -1601,7 +1602,7 @@ char* modeLCD[6][2]= {
     {"|DIG", "Data  AFSK"},
 };
 
-char* MenuTree[22]= { // [radky][sloupce]
+char* MenuTree[23]= { // [radky][sloupce]
   "Your Call",         //  0 call
   "PCB 3.1415",      //  1
   "DCin",            //  2
@@ -1624,6 +1625,7 @@ char* MenuTree[22]= { // [radky][sloupce]
   "B",               // 19  Switch bankB
   "C",               // 20  Switch bankC
   "Lat ",            // 21  Last Switch changed latency [ms]
+  "NetID ",          // 22  Last Switch changed latency [ms]
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -2354,7 +2356,7 @@ void AfterMQTTconnect(){
 void OpenInterfaceInterlock(){      // <-------------- move to hw INTERRUPT?
       if (digitalRead(INTERLOCK) == ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
         ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
-        if(ptt_interlock_active == 1){
+        if(ptt_interlock_active == 1  && SequencerLevel != 0){
           ptt_low(0);
         }
         if(ETHERNET_MODULE == true && MQTT_ENABLE == true){
@@ -2397,6 +2399,11 @@ void ptt_high(int PTToutput){
       }
       delay(PTTlead);
     }
+    if(SequencerLevel == 1 || SequencerLevel == 2 || SequencerLevel == 3){  // if PTT continue ON
+      PTT_tail_timeout[0][0] = millis(); // set time mark PTT 1
+      PTT_tail_timeout[1][0] = millis(); // set time mark PTT 2
+      PTT_tail_timeout[2][0] = millis(); // set time mark PTT 3
+    }
   }
 }
 
@@ -2431,7 +2438,7 @@ void check_ptt_low(){
   switch (SequencerLevel) {
     case 1:{ // PTT-1
       if (millis() - PTT_tail_timeout[0][0] > (PTT_tail_timeout[0][1])){
-        digitalWrite (PTT1, LOW);
+          digitalWrite (PTT1, LOW);
         SequencerLevel = 4;
         PTT_tail_timeout[3][0] = millis(); // set time mark PA
       }
@@ -2439,7 +2446,7 @@ void check_ptt_low(){
     }
     case 2:{ // PTT-2
       if (millis() - PTT_tail_timeout[1][0] > (PTT_tail_timeout[1][1])){
-        digitalWrite (PTT2, LOW);
+          digitalWrite (PTT2, LOW);
         SequencerLevel = 4;
         PTT_tail_timeout[3][0] = millis(); // set time mark PA
       }
@@ -2447,7 +2454,7 @@ void check_ptt_low(){
     }
     case 3:{ // PTT-3
       if (millis() - PTT_tail_timeout[2][0] > (PTT_tail_timeout[2][1])){
-        digitalWrite (PTT3, LOW);
+          digitalWrite (PTT3, LOW);
         SequencerLevel = 4;
         PTT_tail_timeout[3][0] = millis(); // set time mark PA
       }
@@ -2479,6 +2486,7 @@ void RemoteSwQuery(){
   if(RemoteSwitch == 1){
     if(BAND != BandDecoderChange){    // if band change, send query udp packet
       if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP Switch for this band
+        detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
         RemoteSwIP = DetectedRemoteSw[BAND];
         RemoteSwPort = DetectedRemoteSw[BAND][4];
         // UDP send to Switch
@@ -2493,6 +2501,7 @@ void RemoteSwQuery(){
           RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
         UdpCommand.endPacket();
         RemoteSwLatencyAnsw = 0;   // send command, wait to answer
+        attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
       }else{      // if IP sw n/a on this band, clear LED keyboard
         digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
         // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, B00000000);    // bankC
@@ -2578,17 +2587,36 @@ void IncomingUDP(){
       // }
     }
 
-    // INTERLOCK
+    // INTERLOCK 1 direct
     if (packetBuffer[0] == 'i' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
       if(packetBuffer[2] == '1'){
         ptt_interlock_active = B00001;
-        ptt_low(0);
+        if(SequencerLevel != 0){   // if any PTT active
+          ptt_low(0);
+        }
         StatusArray[9] = HIGH;
       }else if(packetBuffer[2] == '0'){
         ptt_interlock_active = B00000;
         StatusArray[9] = LOW;
       }
         MqttPub("interlock", 0, ptt_interlock_active);
+    }
+
+    // INTERLOCK 2 broadcast [b:o#*ps;]  #- open interface ID, *- band number s- PTT 0/1
+    if (packetBuffer[0] == 'b' && packetBuffer[1] == ':' && packetBuffer[2] == 'o' && packetBuffer[5] == 'p' && packetBuffer[7] == ';'){
+      if(String(packetBuffer[4]).toInt() == BAND){    // if PTT on same band - convert ascii to decimal (char to string to int)
+        if(packetBuffer[6] == 1){     // if another OI in network PTT 1
+          ptt_interlock_active = B00001;
+          if(SequencerLevel != 0){   // if any PTT active
+            ptt_low(0);
+          }
+          StatusArray[9] = HIGH;
+        }else if(packetBuffer[6] == 0){
+          ptt_interlock_active = B00000;
+          StatusArray[9] = LOW;
+        }
+        MqttPub("interlock", 0, ptt_interlock_active);
+      }
     }
 
     // PTT
@@ -2623,7 +2651,7 @@ void IncomingUDP(){
   attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
 }
 
-void SendBroadcastUdpPTT(int status){
+void SendBroadcastUdpPTT(int status){         // Measured 2 ms
   detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
   BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
   TxUdpBuffer[0] = B01100010;         // b  - broadcast
@@ -2647,7 +2675,7 @@ void SendBroadcastUdp(){
   UdpCommand.beginPacket(BroadcastIP, BroadcastPort);   // Send to IP and port from recived UDP command
   // UdpCommand.beginMulticast(UdpCommand.BroadcastIP(), BroadcastPort, ETH.localIP()).
     UdpCommand.print("b:o");
-    UdpCommand.print(UNIQUE_ID);
+    UdpCommand.write(UNIQUE_ID);
     UdpCommand.print(";");
   UdpCommand.endPacket();
 
@@ -3028,6 +3056,12 @@ void MenuToLCD(int nr){
       }
     break;
     }
+    case 22:{ // Network ID
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(UNIQUE_ID);
+      CulumnPosition=CulumnPosition+String(UNIQUE_ID).length();
+    break;
+    }
 
   }
   if(StatusArray[2] == LOW){        // Mode
@@ -3145,7 +3179,7 @@ void OpenInterfaceMENU(){
 
 void OpenInterfaceMODE(){
   // MODE
-  switch (Loop[0]) {
+  switch (Loop[0]) { // MODE
     case 0:{ // CW Keyer
       if (K3NG_KEYER == true){
         K3NG_key();
