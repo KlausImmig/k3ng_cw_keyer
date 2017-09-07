@@ -1309,7 +1309,7 @@ boolean K3NG_KEYER      = 1;          // enable CW keyer
 boolean FSK_TX          = 1;          // enable RTTY keying
 boolean FSK_RX          = 0;          // enable RTTY decoder - EXPERIMENTAL!
 //=============================
-byte UNIQUE_ID          = 0x01;       // [hex] must be unique in network - every Open Interface own different number
+byte UNIQUE_ID          = 0x01;       // [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
 //=============================
 boolean MQTT_ENABLE     = 0;          // enable public to MQTT broker
 int MQTT_PORT           = 1883;       // MQTT broker PORT
@@ -1337,9 +1337,9 @@ int MENU_AFTER_POWER_UP = 2;          // MENU after start up
 boolean BUTTON_BEEP     = 1;          // Mode button beep enable
 
 int SEQUENCERlead       = 0;          // SEQUENCER output lead delay ms between SEQ-->PA
-int SEQUENCERtail       = 200;        // SEQUENCER output tail delay ms          :    :                      :     PA-->SEQ
+int SEQUENCERtail       = 0;          // SEQUENCER output tail delay ms          :    :                      :     PA-->SEQ
 int PAlead              = 10;         // PA output lead delay ms between         :    PA-->TRX               :     :    :
-int PAtail              = 200;        // PA output tail delay ms                 :    :    :                 TRX-->PA   :
+int PAtail              = 100;        // PA output tail delay ms                 :    :    :                 TRX-->PA   :
 int PTTlead             = 10;         // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
 int PTTtail             = 350;        // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
 /*                     |                                                        ^    ^    ^            ^    ^     ^
@@ -1371,8 +1371,25 @@ int PTTtail             = 350;        // PTT (FSK) tail delay ms                
 // #define SERIAL_echo           // Feedback on serial line in same baudrate, CVS format <[band],[freq]>\n
 // #define CIV_ADR_OUT  0x56     // CIV output HEX Icom adress (0x is prefix)
 
-char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON LCD MENU
-    "-",
+// BAND DECODER RULES
+long Freq2Band[11][2] = {/*
+Freq Hz from       to   Band number
+*/   {1810000,   2000000},  // #1 [160m]
+     {3500000,   3800000},  // #2  [80m]
+     {7000000,   7200000},  // #3  [40m]
+    {10100000,  10150000},  // #4  [30m]
+    {14000000,  14350000},  // #5  [20m]
+    {18068000,  18168000},  // #6  [17m]
+    {21000000,  21450000},  // #7  [15m]
+    {24890000,  24990000},  // #8  [12m]
+    {28000000,  29700000},  // #9  [10m]
+    {50000000,  52000000},  // #10  [6m]
+   {144000000, 146000000},  // #11  [2m]
+};
+
+// BAND DECODER antenna NAME ON LCD MENU
+char* ANTname[17] = {
+    "-",          // Band 0 (no data)
     "Dipole",     // Band 1
     "Vertical",   // Band 2
     "Yagi",       // Band 3
@@ -1389,6 +1406,21 @@ char* ANTname[17] = {            // Band decoder (BCD output) antennas NAME ON L
     "-",  // Band 14
     "-",  // Band 15
     "-"  // Band 16
+};
+
+// BAND TO REMOTE SWITCH ID
+int BandToRemoteSwitchID[10] = { /*
+Switch ID */
+  0,  // band 0 (no data)
+  1,  // Band 1
+  2,  // Band 2
+  3,  // Band 3
+  4,  // Band 4
+  5,  // Band 5
+  6,  // Band 6
+  7,  // Band 7
+  8,  // Band 8
+  9,  // Band 9
 };
 
 // ETHERNET - MQTT
@@ -2070,8 +2102,8 @@ void AccKeyboardShift(){    // run from interrupt
     // SET IP:PORT from array by relay ID (id = rows)
     // RemoteSwIP = DetectedRemoteSw[packetBuffer[3]];
     // RemoteSwPort = DetectedRemoteSw[packetBuffer[3]][4];
-    RemoteSwIP = DetectedRemoteSw[BAND];
-    RemoteSwPort = DetectedRemoteSw[BAND][4];
+    RemoteSwIP = DetectedRemoteSw[BandToRemoteSwitchID[BAND]];
+    RemoteSwPort = DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4];
 
     // Serial2.print(RemoteSwIP);
     // Serial2.print(":");
@@ -2109,7 +2141,7 @@ void AccKeyboardShift(){    // run from interrupt
     }
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void readSDSettings(){
  char character;
  String settingName;
@@ -2279,14 +2311,14 @@ void readSDSettings(){
 	//Serial.println("error opening settings.txt");
  }
  }
-
+ //-------------------------------------------------------------------------------------------------------
   void SetVariables(){
     Loop[0] = MODE_AFTER_POWER_UP;     //  Mode
     Loop[1] = MENU_AFTER_POWER_UP;     //  Menu
     Loop[2] = MENU_AFTER_POWER_UP;     //  previous Menu
     YOUR_CALL.toCharArray(MenuTree[0], 15);
   }
-
+//-------------------------------------------------------------------------------------------------------
 void printDirectory(File dir, int numTabs) {
     while (true) {
 
@@ -2310,7 +2342,7 @@ void printDirectory(File dir, int numTabs) {
       entry.close();
     }
   }
-
+//-------------------------------------------------------------------------------------------------------
 void AfterMQTTconnect(){
   if(ETHERNET_MODULE == true && MQTT_ENABLE == true){
   //    if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {          // public IP addres to MQTT
@@ -2352,7 +2384,7 @@ void AfterMQTTconnect(){
           client.publish(mqttPath, mqttTX, true);
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void OpenInterfaceInterlock(){      // <-------------- move to hw INTERRUPT?
       if (digitalRead(INTERLOCK) == ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
         ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
@@ -2364,7 +2396,7 @@ void OpenInterfaceInterlock(){      // <-------------- move to hw INTERRUPT?
         }
     }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void ptt_high(int PTToutput){
   if(ptt_interlock_active == 0){
     if(SequencerLevel == 0){
@@ -2406,7 +2438,7 @@ void ptt_high(int PTToutput){
     }
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void ptt_low(int PTToutput){
   switch (PTToutput) {
     case 0:{ // PTT-x
@@ -2433,7 +2465,7 @@ void ptt_low(int PTToutput){
     }
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void check_ptt_low(){
   switch (SequencerLevel) {
     case 1:{ // PTT-1
@@ -2480,15 +2512,15 @@ void check_ptt_low(){
     }
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 // If BAND change, send query packet to Remote IP switch
 void RemoteSwQuery(){
   if(RemoteSwitch == 1){
     if(BAND != BandDecoderChange){    // if band change, send query udp packet
       if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP Switch for this band
         detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
-        RemoteSwIP = DetectedRemoteSw[BAND];
-        RemoteSwPort = DetectedRemoteSw[BAND][4];
+        RemoteSwIP = DetectedRemoteSw[BandToRemoteSwitchID[BAND]];
+        RemoteSwPort = DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4];
         // UDP send to Switch
         TxUdpBuffer[0] = B01110011;         // s
         TxUdpBuffer[1] = B00111010;         // :
@@ -2513,12 +2545,12 @@ void RemoteSwQuery(){
     }
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 // Incoming UDP commands
 void IncomingUDP(){
   // detachInterrupt because this interrupt worked with ethernet also
   detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
-
+  //-------------------------------
   // RTTY transmit incoming string
   UDPpacketSize = UdpRtty.parsePacket();    // if there's data available, read a packet
   if (UDPpacketSize){
@@ -2530,7 +2562,7 @@ void IncomingUDP(){
     memset(packetBuffer, 0, sizeof(packetBuffer));   // if mode no FSK or after TX, clear Buffer
   }
   //    delay(10);
-
+  //-------------------------------
   // COMMANDS
   UDPpacketSize = UdpCommand.parsePacket();    // if there's data available, read a packet
   if (UDPpacketSize){
@@ -2562,6 +2594,7 @@ void IncomingUDP(){
       DetectedRemoteSw [(int)packetBuffer[3] - 48] [2]=TmpAddr[2];
       DetectedRemoteSw [(int)packetBuffer[3] - 48] [3]=TmpAddr[3];
       DetectedRemoteSw [(int)packetBuffer[3] - 48] [4]=UdpCommand.remotePort();
+      RemoteSwLatencyAnsw = 1;           // answer packet received
 
       // Serial2.println();
       // Serial2.print("RX b:r");
@@ -2604,7 +2637,7 @@ void IncomingUDP(){
 
     // INTERLOCK 2 broadcast [b:o#*ps;]  #- open interface ID, *- band number s- PTT 0/1
     if (packetBuffer[0] == 'b' && packetBuffer[1] == ':' && packetBuffer[2] == 'o' && packetBuffer[5] == 'p' && packetBuffer[7] == ';'){
-      if(String(packetBuffer[4]).toInt() == BAND){    // if PTT on same band - convert ascii to decimal (char to string to int)
+      if(packetBuffer[4] == BAND){    // if PTT on same band
         if(packetBuffer[6] == 1){     // if another OI in network PTT 1
           ptt_interlock_active = B00001;
           if(SequencerLevel != 0){   // if any PTT active
@@ -2650,7 +2683,7 @@ void IncomingUDP(){
   }
   attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
 }
-
+//-------------------------------------------------------------------------------------------------------
 void SendBroadcastUdpPTT(int status){         // Measured 2 ms
   detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
   BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
@@ -2667,7 +2700,7 @@ void SendBroadcastUdpPTT(int status){         // Measured 2 ms
   UdpCommand.endPacket();
   attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
 }
-
+//-------------------------------------------------------------------------------------------------------
 void SendBroadcastUdp(){
   detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
   BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
@@ -2689,7 +2722,7 @@ void SendBroadcastUdp(){
   Timeout[8][0] = millis();                      // set time mark
   attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
 }
-
+//-------------------------------------------------------------------------------------------------------
 void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
   if(ETHERNET_MODULE == true && MQTT_ENABLE == true && MQTT_LOGIN==true){
     if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
@@ -2715,7 +2748,7 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
     }
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void MqttPubString(String path, String character){
   if(ETHERNET_MODULE == true && MQTT_ENABLE == true && MQTT_LOGIN==true){
     if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
@@ -2733,7 +2766,7 @@ void MqttPubString(String path, String character){
     }
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void DCinMeasure(){
   if (millis() - Timeout[7][0] > (Timeout[7][1])){
     DCinVoltage = volt(analogRead(DCIN), 11, VOLTAGE_MEASURE_ADJUST);
@@ -2750,7 +2783,7 @@ void DCinMeasure(){
       MqttPub("pwrvoltage", DCinVoltage, 0);
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void OpenInterfaceLCD(){    // LCD
     if (millis() - Timeout[0][0] > (Timeout[0][1])){
       // micro SD
@@ -2790,7 +2823,7 @@ void OpenInterfaceLCD(){    // LCD
       }
     }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void MenuToLCD(int nr){
   String Note = MenuTree[nr];
   Note.remove(11);                // fixed lenth to 11 char
@@ -2975,7 +3008,7 @@ void MenuToLCD(int nr){
           }
         }else{
           lcd.print(" Disable");
-          CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+          CulumnPosition=CulumnPosition+String(" Disable").length()-1;
         }
       }else{
         lcd.print(BAND);
@@ -3000,7 +3033,7 @@ void MenuToLCD(int nr){
           }
         }else{
           lcd.print(" Disable");
-          CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+          CulumnPosition=CulumnPosition+String(" Disable").length()-1;
         }
       }else{
         lcd.print(BAND);
@@ -3025,7 +3058,7 @@ void MenuToLCD(int nr){
           }
         }else{
           lcd.print(" Disable");
-          CulumnPosition=CulumnPosition+String("ExtButt OFF").length()-1;
+          CulumnPosition=CulumnPosition+String(" Disable").length()-1;
         }
       }else{
         lcd.print(BAND);
@@ -3074,7 +3107,7 @@ void MenuToLCD(int nr){
     CulumnPosition++;
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 String PrintByte(byte ByteToPrint){
   String LCDstring = "";
   for (int i=0; i<8; i++){
@@ -3087,7 +3120,7 @@ String PrintByte(byte ByteToPrint){
   }
   return LCDstring;
 }
-
+//-------------------------------------------------------------------------------------------------------
 void OpenInterfaceMENUtimeout(){
   if(Loop[2] != Loop[1]){
     StatusArray[2] = HIGH;          // Menu
@@ -3098,7 +3131,7 @@ void OpenInterfaceMENUtimeout(){
     StatusArray[2] = LOW;         // Mode
   }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void OpenInterfaceMENU(){
       OpenInterfaceMENUtimeout();
       if (digitalRead(MENU) != StatusArray[0]) {   // reading != lastbuttonstate
@@ -3176,7 +3209,7 @@ void OpenInterfaceMENU(){
         }
       }
 }
-
+//-------------------------------------------------------------------------------------------------------
 void OpenInterfaceMODE(){
   // MODE
   switch (Loop[0]) { // MODE
@@ -3260,7 +3293,7 @@ void OpenInterfaceMODE(){
     }
   }  // endswitch
 }
-
+//-------------------------------------------------------------------------------------------------------
 // TONE
 int TON(int ToneType){
   if (BUTTON_BEEP == true){
@@ -4063,22 +4096,18 @@ void BandDecoder() {
 //-------------------------------------------------------------------------------------------------------
 
 void FreqToBandRules(long freq){
-    //=====[ Frequency (Hz) to Band rules ]======================================
-    //                                        you can expand rules up to 16 BCD Bands
-
-         if (freq >=   1810000 && freq <=   2000000 )  {BAND=1;}  // 160m
-    else if (freq >=   3500000 && freq <=   3800000 )  {BAND=2;}  //  80m
-    else if (freq >=   7000000 && freq <=   7200000 )  {BAND=3;}  //  40m
-    else if (freq >=  10100000 && freq <=  10150000 )  {BAND=4;}  //  30m
-    else if (freq >=  14000000 && freq <=  14350000 )  {BAND=5;}  //  20m
-    else if (freq >=  18068000 && freq <=  18168000 )  {BAND=6;}  //  17m
-    else if (freq >=  21000000 && freq <=  21450000 )  {BAND=7;}  //  15m
-    else if (freq >=  24890000 && freq <=  24990000 )  {BAND=8;}  //  12m
-    else if (freq >=  28000000 && freq <=  29700000 )  {BAND=9;}  //  10m
-    else if (freq >=  50000000 && freq <=  52000000 ) {BAND=10;}  //   6m
-    else if (freq >= 144000000 && freq <= 146000000 ) {BAND=11;}  //   2m
+         if (freq >=Freq2Band[0][0] && freq <=Freq2Band[0][1] )  {BAND=1;}  // 160m
+    else if (freq >=Freq2Band[1][0] && freq <=Freq2Band[1][1] )  {BAND=2;}  //  80m
+    else if (freq >=Freq2Band[2][0] && freq <=Freq2Band[2][1] )  {BAND=3;}  //  40m
+    else if (freq >=Freq2Band[3][0] && freq <=Freq2Band[3][1] )  {BAND=4;}  //  30m
+    else if (freq >=Freq2Band[4][0] && freq <=Freq2Band[4][1] )  {BAND=5;}  //  20m
+    else if (freq >=Freq2Band[5][0] && freq <=Freq2Band[5][1] )  {BAND=6;}  //  17m
+    else if (freq >=Freq2Band[6][0] && freq <=Freq2Band[6][1] )  {BAND=7;}  //  15m
+    else if (freq >=Freq2Band[7][0] && freq <=Freq2Band[7][1] )  {BAND=8;}  //  12m
+    else if (freq >=Freq2Band[8][0] && freq <=Freq2Band[8][1] )  {BAND=9;}  //  10m
+    else if (freq >=Freq2Band[9][0] && freq <=Freq2Band[9][1] ) {BAND=10;}  //   6m
+    else if (freq >=Freq2Band[10][0] && freq <=Freq2Band[10][1] ) {BAND=11;}  //   2m
     else {BAND=0;}                                                // out of range
-    //===========================================================================
 }
 
 // BAND DATA OUT
