@@ -1332,7 +1332,7 @@ int UDP_COMMAND_PORT    = 88;         // UDP port listen to command
                                       //        ? c = Controller, # = ID
 
 String YOUR_CALL        = "Your Call";
-int MODE_AFTER_POWER_UP = 4;          // MODE after start up
+int MODE_AFTER_POWER_UP = 3;          // MODE after start up
 int MENU_AFTER_POWER_UP = 2;          // MENU after start up
 boolean BUTTON_BEEP     = 1;          // Mode button beep enable
 
@@ -1468,9 +1468,9 @@ char charConfigFile[8]; // length +1
 
 // Serial2FSK (FSK TX)
 int SERBAUD0                  = 1200;       // Serial0 in/out baudrate (seria2fsk), if set 1200 may be controled as winkey
-boolean AFSK_ENABLE           = 1;          // AFSK AUDIO (serial2fsk, fsk memory)
-boolean SERIAL_FSK_TX_ECHO    = 1;          // enable TX echo on serial port
-boolean SHOW_HIDDEN_FSK_CHAR  = 1;          // show invisible TX characters on LCD
+boolean AFSK_ENABLE           = 0;          // AFSK AUDIO (serial2fsk, fsk memory)
+boolean SERIAL_FSK_TX_ECHO    = 0;          // enable TX echo on serial port
+boolean SHOW_HIDDEN_FSK_CHAR  = 0;          // show invisible TX characters on LCD
 int MARK                      = 1445;       // [Hz] AFSK mark 1445 / 2295 Hz
 int SPACE                     = 1275;       // [Hz] AFSK space 1275 / 2125 Hz
 #define FMARK    HIGH            // FSK mark level [LOW/HIGH]
@@ -3251,10 +3251,10 @@ void OpenInterfaceMODE(){
     break;
     }
     case 3:{ // FSK PC
-      if (FSK_RX==true){
+      if (FSK_RX==1){
         fskDecoder();
       }
-      if (FSK_TX==true){
+      if (FSK_TX==1){
         ButtonFSK();
       }
       if(digitalRead(PTT232)==HIGH){    // PTT-232
@@ -3263,8 +3263,8 @@ void OpenInterfaceMODE(){
           StatusArray[3] = HIGH;
         }
       }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
-        StatusArray[PTTmodeFSK] = LOW;
-        ptt_low(1);
+        StatusArray[3] = LOW;
+        ptt_low(PTTmodeFSK);
       }
       MenuEncoder();
     break;
