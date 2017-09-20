@@ -2009,7 +2009,7 @@ void setup()
     }
     SendBroadcastUdp();
   }
-
+  SwitchHardware(MODE_AFTER_POWER_UP);
 } // SETUP END
 
 //-------------------------------------------------------------------------------------------------------
@@ -3155,41 +3155,7 @@ void OpenInterfaceMENU(){
                   Loop[0]=0;
                 }
                   MqttPub("mode", 0, Loop[0]);
-                switch (Loop[0]) {
-                  case 0:{ // CW Keyer
-                      digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
-                      digitalWrite (AFSK, LOW);
-                      break;
-                  }
-                  case 1:{ // CW PC
-                      digitalWrite (WINKEY, LOW);
-                      digitalWrite (AFSK, LOW);
-                      break;
-                  }
-                  case 2:{ // SSB
-                      digitalWrite (WINKEY, LOW);
-                      digitalWrite (AFSK, LOW);
-                      break;
-                  }
-                  case 3:{ // FSK PC
-                      digitalWrite (WINKEY, LOW);
-                      digitalWrite (AFSK, LOW);
-                      break;
-                  }
-                  case 4:{ // FSK ASCII
-                      Serial.begin(SERBAUD0);
-                      digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
-                      digitalWrite (AFSK, LOW);
-                      Serial.flush();  // clear buffer before switch to serial2FSK
-                      break;
-                  }
-                  case 5:{ // DIGITAL (AFSK)
-                      Serial.begin(PRIMARY_SERIAL_PORT_BAUD);
-                      digitalWrite (WINKEY, LOW);
-                      digitalWrite (AFSK, HIGH);
-                      break;
-                  }
-                }  // endswitch
+                SwitchHardware(Loop[0]);
               } // end if UDP Interlock ON
             }else{ // menu enable
               Loop[1]++;
@@ -3207,6 +3173,44 @@ void OpenInterfaceMENU(){
           }
         }
       }
+}
+//-------------------------------------------------------------------------------------------------------
+void SwitchHardware(int SwitchHardwareMode){
+  switch (SwitchHardwareMode) {
+    case 0:{ // CW Keyer
+        digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
+        digitalWrite (AFSK, LOW);
+        break;
+    }
+    case 1:{ // CW PC
+        digitalWrite (WINKEY, LOW);
+        digitalWrite (AFSK, LOW);
+        break;
+    }
+    case 2:{ // SSB
+        digitalWrite (WINKEY, LOW);
+        digitalWrite (AFSK, LOW);
+        break;
+    }
+    case 3:{ // FSK PC
+        digitalWrite (WINKEY, LOW);
+        digitalWrite (AFSK, LOW);
+        break;
+    }
+    case 4:{ // FSK ASCII
+        Serial.begin(SERBAUD0);
+        digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
+        digitalWrite (AFSK, LOW);
+        Serial.flush();  // clear buffer before switch to serial2FSK
+        break;
+    }
+    case 5:{ // DIGITAL (AFSK)
+        Serial.begin(PRIMARY_SERIAL_PORT_BAUD);
+        digitalWrite (WINKEY, LOW);
+        digitalWrite (AFSK, HIGH);
+        break;
+    }
+  }  // endswitch
 }
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceMODE(){
