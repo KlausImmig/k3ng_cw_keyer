@@ -1326,13 +1326,14 @@ int UDP_COMMAND_PORT    = 88;         // UDP port listen to command
                                       //          maybe used also as local Switch
 
                                       // c:###:value; - configure
-                                      //              - 001-SERBAUD2
-                                      //                value  0=1200 1=2400 2=4800 3=9600 4=19200 5=38400 6=57600 7=115200
-                                      //                  [echo -n "c:001:4;" | nc -u -w1 192.168.1.20 88]
-                                      //              - 002-CIV_ADRESS
-                                      //                  [echo -n "c:002:56;" | nc -u -w1 192.168.1.20 88]
-                                      //              - 003-BAND_DECODER_IN
-                                      //                0=disable 1=ICOM_CIV 2=KENWOOD_PC 3=YAESU_CAT 4=YAESU_CAT_OLD 5=INPUT_SERIAL
+                                      //              - 000-NetID ## [hex]
+                                      //              - 001-SERBAUD2 #
+                                      //                    value  0=1200 1=2400 2=4800 3=9600 4=19200 5=38400 6=57600 7=115200
+                                      //                    [echo -n "c:001:4;" | nc -u -w1 192.168.1.20 88]
+                                      //              - 002-CIV_ADRESS ## [hex]
+                                      //                    [echo -n "c:002:56;" | nc -u -w1 192.168.1.20 88]
+                                      //              - 003-BAND_DECODER_IN #
+                                      //                    0=disable 1=ICOM_CIV 2=KENWOOD_PC 3=YAESU_CAT 4=YAESU_CAT_OLD 5=INPUT_SERIAL
 
                                       // b:s#;  - Broadcast identify packet
                                       //        - s = Switch board, # = ID
@@ -2685,6 +2686,12 @@ void IncomingUDP(){
       // CONFIGURE c:001:value;
       if (packetBuffer[0] == 'c' && packetBuffer[1] == ':' && packetBuffer[5] == ':'){
 
+        // 000-NetID [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
+        if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '0' && packetBuffer[8] == ';'){
+          UNIQUE_ID = (hexToDecBy4bit(packetBuffer[6]) << 4) | hexToDecBy4bit(packetBuffer[7]);   // 4-bit left shift to combine them
+          MqttPub("net-id", 0, UNIQUE_ID);
+        }
+
         // 001-SERBAUD2 - 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200,
         if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '1' && packetBuffer[7] == ';'){  // SERBAUD2
           tmp = packetBuffer[6]-'0';  // convert to int for compare
@@ -3163,7 +3170,8 @@ void MenuToLCD(int nr){
     }
     case 22:{ // Network ID
       lcd.setCursor(CulumnPosition, 1);
-      lcd.print(UNIQUE_ID);
+      lcd.print(UNIQUE_ID, HEX);
+      lcd.print("h");
       CulumnPosition=CulumnPosition+String(UNIQUE_ID).length();
     break;
     }
