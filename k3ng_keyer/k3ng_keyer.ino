@@ -1298,10 +1298,10 @@ unsigned long automatic_sending_interruption_time = 0;
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
 #define VOLTAGE_MEASURE_ADJUST 0.3    // ofset for precise adjust voltage measure
-boolean ETHERNET_MODULE = 0;          // enable ETHERNET module (must be installed) EXPERIMENTAL
-boolean ACC_KEYBOARD    = 0;          // Shift in/out register via ACC
-boolean RemoteSwitch    = 0;          // IP controled remote RemoteSwitch
-boolean KeyboardAnswLed = 0;          // Keyboard Led shown answered UDP packet from IP RemoteSwitch
+boolean ETHERNET_MODULE = 1;          // enable ETHERNET module (must be installed) EXPERIMENTAL
+boolean ACC_KEYBOARD    = 1;          // Shift in/out register via ACC
+boolean RemoteSwitch    = 1;          // IP controled remote RemoteSwitch
+boolean KeyboardAnswLed = 1;          // Keyboard Led shown answered UDP packet from IP RemoteSwitch
                                       // + latency measure. Disable set localy
 
 // FEATURES AND OPTIONS
@@ -1324,6 +1324,15 @@ int UDP_COMMAND_PORT    = 88;         // UDP port listen to command
                                       // p:#:%; - PTT # 0/1 (on/off), % 0-3 (0=PTTPA, 1=PTT1, 2=PTT2, 3=PTT3)
                                       // s:###; - ### Switch0-2 binary for set LED on keyboard (if installed) and measure latency
                                       //          maybe used also as local Switch
+
+                                      // c:###:value; - configure
+                                      //              - 001-SERBAUD2
+                                      //                value  0=1200 1=2400 2=4800 3=9600 4=19200 5=38400 6=57600 7=115200
+                                      //                  [echo -n "c:001:4;" | nc -u -w1 192.168.1.20 88]
+                                      //              - 002-CIV_ADRESS
+                                      //                  [echo -n "c:002:56;" | nc -u -w1 192.168.1.20 88]
+                                      //              - 003-BAND_DECODER_IN
+                                      //                0=disable 1=ICOM_CIV 2=KENWOOD_PC 3=YAESU_CAT 4=YAESU_CAT_OLD 5=INPUT_SERIAL
 
                                       // b:s#;  - Broadcast identify packet
                                       //        - s = Switch board, # = ID
@@ -2672,11 +2681,75 @@ void IncomingUDP(){
           MqttPub("mode", 0, Loop[0]);
         }
       }
+
+      // CONFIGURE c:001:value;
+      if (packetBuffer[0] == 'c' && packetBuffer[1] == ':' && packetBuffer[5] == ':'){
+
+        // 001-SERBAUD2 - 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200,
+        if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '1' && packetBuffer[7] == ';'){  // SERBAUD2
+          tmp = packetBuffer[6]-'0';  // convert to int for compare
+          switch (tmp) {
+            case 0:
+              SERBAUD2 = 1200;
+            break;
+            case 1:
+              SERBAUD2 = 2400;
+            break;
+            case 2:
+              SERBAUD2 = 4800;
+            break;
+            case 3:
+              SERBAUD2 = 9600;
+            break;
+            case 4:
+              SERBAUD2 = 19200;
+            break;
+            case 5:
+              SERBAUD2 = 38400;
+            break;
+            case 6:
+              SERBAUD2 = 57600;
+            break;
+            case 7:
+              SERBAUD2 = 115200;
+            break;
+          }
+          Serial2.begin(SERBAUD2);
+          MqttPub("serbaud2", 0, SERBAUD2);
+        } // end SERBAUD2
+
+        // 002-CIV_ADRESS
+        if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '2' && packetBuffer[8] == ';'){
+          CIV_ADRESS = (hexToDecBy4bit(packetBuffer[6]) << 4) | hexToDecBy4bit(packetBuffer[7]);   // 4-bit left shift to combine them
+          MqttPub("ci-v", 0, CIV_ADRESS);
+        }
+
+        //  003-BAND_DECODER_IN  0=disable 1=ICOM_CIV 2=KENWOOD_PC 3=YAESU_CAT 4=YAESU_CAT_OLD 5=INPUT_SERIAL
+        if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '3' && packetBuffer[7] == ';'){
+          tmp = packetBuffer[6]-'0';  // convert to int for compare
+          if(tmp < 6){
+            BAND_DECODER_IN = hexToDecBy4bit(packetBuffer[6]);
+          }
+          MqttPub("band-decoder-trx", 0, BAND_DECODER_IN);
+        }
+
+
+      } // end configure
+
+
   //    lcd.print("      ");
     memset(packetBuffer, 0, sizeof(packetBuffer));   // Clear contents of Buffer
     }
     attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
   }
+}
+
+//-------------------------------------------------------------------------------------------------------
+unsigned char hexToDecBy4bit(unsigned char hex)
+// convert a character representation of a hexidecimal digit into the actual hexidecimal value
+{
+  if(hex > 0x39) hex -= 7; // adjust for hex letters upper or lower case
+  return(hex & 0xf);
 }
 //-------------------------------------------------------------------------------------------------------
 void SendBroadcastUdpPTT(int status){         // Measured 2 ms
