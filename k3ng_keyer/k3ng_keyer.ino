@@ -1397,6 +1397,23 @@ Freq Hz from       to   Band number
    {144000000, 146000000},  // #11  [2m]
 };
 
+int CIVModeSet[13]{
+/* ICOM mode  ->   Open Interface mode 0-CW Keyer, 1-CW PC, 2-SSB, 3-FSK PC, 4-FSK, 5-DIGITAL(AFSK)*/
+/* LSB        */	2,
+/* USB        */	2,
+/* AM         */	2,
+/* CW         */	0,
+/* RTTY (FSK) */	3,
+/* FM 	      */  2,
+/* Wide FM    */	2,
+/* CW-R       */	0,
+/* RTTY-R     */  3,
+/* not use    */  0,
+/* not use    */  0,
+/* S-AM       */  2,
+/* PSK 	      */  5
+};
+
 // BAND DECODER antenna NAME ON LCD MENU
 char* ANTname[17] = {
     "-",          // Band 0 (no data)
@@ -3910,7 +3927,7 @@ void BandDecoder() {
     if (BAND_DECODER_IN == 1){  // ICOM_CIV
         if(BAND_DECODER_REQUEST > 0){
             if (millis() - Timeout[4][0] > (Timeout[4][1])){
-                txCIV(3, 0, CIV_ADRESS);                    // ([command], [freq]) 3=read
+                txCIV(3, 0, CIV_ADRESS);                    // ([command], [freq]) 3=read freq
                 Timeout[4][0] = millis();              // set time mark
             }
         }
@@ -3920,7 +3937,7 @@ void BandDecoder() {
                 incomingByte = Serial2.read();
                 icomSM(incomingByte);
                 rdIS="";
-                if(rdI[10]==0xFD){                    // state machine end
+                if(rdI[4]==0x03 && rdI[10]==0xFD){    // Freq - 03 command and state machine end
                     for (int i=9; i>=5; i-- ){
                         if (rdI[i] < 10) {            // leading zero
                             rdIS = rdIS + 0;
@@ -3930,6 +3947,7 @@ void BandDecoder() {
                     freq = rdIS.toInt();
                     FreqToBandRules(freq);
                     bandSET();                             // set outputs relay
+                    txCIV(4, 0, CIV_ADRESS);               // ([command], [freq]) 4=read MODE
 
                     #if defined(REMOTE_RELAY)
                         remoteRelay();
@@ -3941,6 +3959,9 @@ void BandDecoder() {
                     if (BAND_DECODER_WATCHDOG > 0){
                         Timeout[3][0] = millis(); // set time mark
                     }
+                }
+                if(rdI[4]==0x04 && rdI[7]==0xFD){    // Mode - 04 command and state machine end
+                  Loop[0]=CIVModeSet[rdI[5]];        // set mode by CIVModeSet table 
                 }
             }
         }
@@ -4259,7 +4280,9 @@ int icomSM(byte b){      // state machine
           }else if( b == CIV_ADRESS ){ stateMachine = 6; rdI[2]=b;}else{ stateMachine = 1;}; break;                       // or $05
 
         case 4: if( b == CIV_ADRESS ){ stateMachine = 5; rdI[3]=b; }else{ stateMachine = 1;}; break;                      // select command $03
-        case 5: if( b == 0x00 || b == 0x03 ){stateMachine = 8; rdI[4]=b; }else{ stateMachine = 1;}; break;
+        case 5: if( b == 0x00 || b == 0x03 ){stateMachine = 8; rdI[4]=b;  // freq
+                }else if( b == 0x04 ){stateMachine = 14; rdI[4]=b;        // mode
+                }else{ stateMachine = 1;}; break;
 
         case 6: if( b == 0x00 || b == 0xE0 || b == 0xF1 ){ stateMachine = 7; rdI[3]=b; }else{ stateMachine = 1;}; break;  // select command $05
         case 7: if( b == 0x00 || b == 0x05 ){ stateMachine = 8; rdI[4]=b; }else{ stateMachine = 1;}; break;
@@ -4270,6 +4293,10 @@ int icomSM(byte b){      // state machine
        case 11: if( b <= 0x99 ){stateMachine = 12; rdI[8]=b; }else{stateMachine = 1;}; break;
        case 12: if( b <= 0x99 ){stateMachine = 13; rdI[9]=b; }else{stateMachine = 1;}; break;
        case 13: if( b == 0xFD ){stateMachine = 1; rdI[10]=b; }else{stateMachine = 1; rdI[10] = 0;}; break;
+
+       case 14: if( b <= 0x12 ){stateMachine = 15; rdI[5]=b; }else{stateMachine = 1;}; break;   // Mode
+       case 15: if( b <= 0x03 ){stateMachine = 16; rdI[6]=b; }else{stateMachine = 1;}; break;   // Filter
+       case 16: if( b == 0xFD ){stateMachine = 1; rdI[7]=b; }else{stateMachine = 1; rdI[7] = 0;}; break;
     }
 }
 
