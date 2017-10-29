@@ -1397,6 +1397,41 @@ Freq Hz from       to   Band number
    {144000000, 146000000},  // #11  [2m]
 };
 
+// BAND TO REMOTE SWITCH ID
+int BandToRemoteSwitchID[12] = { /*
+IP Switch
+  ID
+ 0-7  */
+  7,  // band 0 (no data)
+  1,  // Band #1 [160m]
+  2,  // Band #2  [80m]
+  3,  // Band #3  [40m]
+  4,  // Band #4  [30m]
+  5,  // Band #5  [20m]
+  0,  // Band #6  [17m]
+  6,  // Band #7  [15m]
+  0,  // Band #8  [12m]
+  0,  // Band #9  [10m]
+  0,  // Band #10  [6m]
+  0,  // Band #11  [2m]
+};
+
+int IpSwBankCrange[8]= { /*
+number of IP switch bank C position  */
+  16, // ID 8
+  8,  // ID 9
+  8,  // ID A
+  8,  // ID B
+  8,  // ID C
+  8,  // ID D
+  8,  // ID E
+  15,  // ID F
+};
+// for using 1 or 2 eight output modules (ip switch bank C ID 8-F, corresponds bank A/B ID 0-7)
+// + need hardware debounce - add C89 C90 R53 R55 R56 R57
+int IpSwitchEncoder;
+byte IpSwitchBankC[2];
+
 int CIVModeSet[13]{
 /* ICOM mode  ->   Open Interface mode 0-CW Keyer, 1-CW PC, 2-SSB, 3-FSK PC, 4-FSK, 5-DIGITAL(AFSK)*/
 /* LSB        */	2,
@@ -1415,7 +1450,7 @@ int CIVModeSet[13]{
 };
 
 // BAND DECODER antenna NAME ON LCD MENU
-char* ANTname[17] = {
+char* ANTname[12] = {
     "-",          // Band 0 (no data)
     "Dipole",     // Band 1
     "Vertical",   // Band 2
@@ -1428,26 +1463,6 @@ char* ANTname[17] = {
     "-",  // Band 9
     "-",  // Band 10
     "-",  // Band 11
-    "-",  // Band 12
-    "-",  // Band 13
-    "-",  // Band 14
-    "-",  // Band 15
-    "-"  // Band 16
-};
-
-// BAND TO REMOTE SWITCH ID
-int BandToRemoteSwitchID[10] = { /*
-Switch ID */
-  0,  // band 0 (no data)
-  1,  // Band 1
-  2,  // Band 2
-  3,  // Band 3
-  4,  // Band 4
-  5,  // Band 5
-  6,  // Band 6
-  7,  // Band 7
-  8,  // Band 8
-  9,  // Band 9
 };
 
 // ETHERNET - MQTT
@@ -1480,7 +1495,7 @@ Switch ID */
   int BroadcastPort       = 88;             // destination broadcast packet port
   IPAddress RemoteSwIP(0, 0, 0, 0);         // remote UDP IP switch - set from UDP DetectRemote array
   int RemoteSwPort         = 0;             // remote UDP IP switch port
-  byte DetectedRemoteSw[10][5];             // detect by RX broadcast packet - storage by ID (ID=rows)
+  byte DetectedRemoteSw[16][5];             // detect by RX broadcast packet - storage by ID (ID=rows)
   int BandDecoderChange    = 0;             // If band change, send query packet to Remote IP switch
   long RemoteSwLatency[2];                  // start, stop mark
   byte RemoteSwLatencyAnsw = 1;             // answer (offline) detect
@@ -1519,11 +1534,11 @@ long Timeout[9][2] = { // [lines][rows]
     {0, 3000},         // Menu to Mode timeout
     {0, 1000},         // Band decoder read (Icom voltage, Yaesu BCD)  [2][0-timer/1-timeout(input refresh)]
     {0, BAND_DECODER_WATCHDOG}, // Band decoder WATCHDOG [3][0-timer/1-timeout]
-    {0, BAND_DECODER_REQUEST},         // Band decoder REQUEST [4][0-timer/1-timeout]
+    {0, BAND_DECODER_REQUEST},  // Band decoder REQUEST [4][0-timer/1-timeout]
     {0, 50},           // MODE button debounce [5][0-timer/1-debounce]
     {0, 500},          // MODE button long [6][0-timer/1-long]
     {0, 1000},         // DCin voltage measure [7][0-timer/1-long]
-    {0, 60000},         // UDP Broadcast packet [7][0-timer/1-timeout]
+    {0, 60000},        // UDP Broadcast packet [7][0-timer/1-timeout]
 };
 long PTT_tail_timeout[5][2] = { // [lines][rows]
     {0, PTTtail},          // PTT 1
@@ -1646,12 +1661,19 @@ byte SequencerLevel = 0;   // 0 = off, 1-2-3 = PTT1-2-3, 4 = PA, 5 = SEQ
 float DCinVoltage;
 int i = 0;
 int tmp = 0;
-int Loop[3] = {MODE_AFTER_POWER_UP, MENU_AFTER_POWER_UP, MENU_AFTER_POWER_UP};     //  Mode, Menu, previous Menu
+
+// int Loop[3] = {MODE_AFTER_POWER_UP, MENU_AFTER_POWER_UP, MENU_AFTER_POWER_UP};     //  Mode, Menu, previous Menu
+int ActualMode = MODE_AFTER_POWER_UP;
+int ActualMenu = MENU_AFTER_POWER_UP;
+int PreviousMenu = MENU_AFTER_POWER_UP;
+
 byte EncPrev=1;
 byte microSD[8] = {0b00000, 0b01111, 0b01001, 0b11111, 0b01111, 0b11111, 0b11111, 0b00000};
 byte Eth[8] = {0b00000, 0b00000, 0b11111, 0b10001, 0b10001, 0b11011, 0b11111, 0b00000};
 //byte InterlockChar[8] = {0b11111, 0b10001, 0b11011, 0b11011, 0b11011, 0b10001, 0b11111, 0b00000};
 byte InterlockChar[8] = {0b00100, 0b01010, 0b01010, 0b11111, 0b11011, 0b11011, 0b11111, 0b00000};
+byte Lpipe[8] = {0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b00000};
+byte Rpipe[8] = {0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b00000};
 char* modeLCD[6][2]= {
     {"|CWK", "CW keyer  "},
     {">CWD", "PC DTR/RTS"},
@@ -1689,18 +1711,12 @@ char* MenuTree[23]= { // [radky][sloupce]
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
 
-byte StatusArray[10] = {
-  HIGH,   // 0 MODE lastbuttonstate
-  HIGH,   // 1 MODE debounced signal
-  LOW,    // 2 LOW-MODE | HIGH MENU
-  LOW,    // 3 PTT232 active
-  LOW,    // 4 FootSW change
-  LOW,    // 5 PTT-PA active
-  LOW,    // 6 PTT1 active
-  LOW,    // 7 PTT2 active
-  LOW,    // 8 PTT3 active
-  LOW,    // 9 Interlock active from UDP
-};
+byte ModeLastButtonState = HIGH;
+byte ModeDebouncedSignal = HIGH;
+byte ModeMenuStatus = LOW;  // LOW-MODE | HIGH MENU
+byte Ptt232Active = LOW;
+byte FootSwChange = LOW;
+byte InterlockFromUdpActive = LOW;
 //byte ptt_interlock_active = 0;  // define in K3NG code
 
 // FSK RX
@@ -1910,6 +1926,8 @@ void setup()
   // other
   lcd.createChar(4, microSD);
   lcd.createChar(5, InterlockChar);
+  lcd.createChar(6, Lpipe);
+  lcd.createChar(7, Rpipe);
   lcd.begin(16, 2);
   lcd.setCursor(2, 1);
 //            lcd.print((char)188);
@@ -1998,7 +2016,6 @@ void setup()
     pinMode(ShiftOutDataPin, OUTPUT);
     // SHIFT IN
     pinMode (ShiftInInterruptPin, INPUT);
-    attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);  // need detachInterrupt in IncomingUDP() subroutine
     pinMode(ShiftInLatchPin, OUTPUT);
     pinMode(ShiftInClockPin, OUTPUT);
     pinMode(ShiftInDataPin, INPUT);
@@ -2037,6 +2054,7 @@ void setup()
     SendBroadcastUdp();
   }
   SwitchHardware(MODE_AFTER_POWER_UP);
+  InterruptON(1);
 } // SETUP END
 
 //-------------------------------------------------------------------------------------------------------
@@ -2061,7 +2079,7 @@ void loop() {
 // http://www.catonmat.net/blog/low-level-bit-hacks-you-absolutely-must-know/
 
 void AccKeyboardShift(){    // run from interrupt
-  if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP Switch for this band
+  if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0 && SequencerLevel == 0){       // if detect IP Switch for this band and PTT OFF
     digitalWrite(ShiftInLatchPin,1);   //Set latch pin to 1 to get recent data into the CD4021
     delayMicroseconds(15);
     digitalWrite(ShiftInLatchPin,0);     //Set latch pin to 0 to get data from the CD4021
@@ -2159,6 +2177,84 @@ void AccKeyboardShift(){    // run from interrupt
       shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[0]);    // bank0
       digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
     }
+  }
+}
+//-------------------------------------------------------------------------------------------------------
+void InterruptON(int IntSw){
+  if(IntSw==0){
+    detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
+    detachInterrupt(digitalPinToInterrupt(encB));
+  }else{
+    attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);  // need detachInterrupt in IncomingUDP() subroutine
+    attachInterrupt(digitalPinToInterrupt(encB), EncoderInterrupt, FALLING);
+  }
+}
+//-------------------------------------------------------------------------------------------------------
+// ENCODER
+void MenuEncoder(){
+  if(ActualMenu!=20 || ModeMenuStatus == HIGH || DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]==0){   // for menu 20 activate interrupt encoder
+    if(digitalRead(encB) == LOW && EncPrev == 1){
+      if(digitalRead(encA) == LOW){
+        ActualMenu++;
+          if(ActualMenu > MenuTreeSize-1){
+            ActualMenu=0;
+          }
+      }else{
+        ActualMenu--;
+          if(ActualMenu < 0){
+            ActualMenu=MenuTreeSize-1;
+          }
+      }
+      EncPrev=0;
+    }else  if(digitalRead(encB) == HIGH && EncPrev == 0){
+      EncPrev=1;
+    }
+  }
+}
+//-------------------------------------------------------------------------------------------------------
+// ToDo: udp send only if IpSwitchEncoder variable change
+void EncoderInterrupt(){
+  if(ActualMenu==20 && DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0 && SequencerLevel == 0 && ModeMenuStatus == LOW && DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0){       // if detect IP Switch for this band and PTT OFF
+    // int IpSwBankCrange[8]= {
+    // int IpSwitchEncoder;
+    // byte IpSwitchBankC[2];
+    if(digitalRead(encA) == LOW){
+      IpSwitchEncoder++;
+        if(IpSwitchEncoder > IpSwBankCrange[BandToRemoteSwitchID[BAND]]-1){
+          // IpSwitchEncoder=0;
+          IpSwitchEncoder=IpSwBankCrange[BandToRemoteSwitchID[BAND]]-1;
+        }
+    }else{
+      IpSwitchEncoder--;
+        if(IpSwitchEncoder < 0){
+          // IpSwitchEncoder=IpSwBankCrange[BandToRemoteSwitchID[BAND]]-1;
+          IpSwitchEncoder=0;
+        }
+    }
+    RemoteSwIP = DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8];
+    RemoteSwPort = DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4];
+    // UDP send to Switch
+    if(ETHERNET_MODULE == 1){
+      TxUdpBuffer[2] = 0;
+      TxUdpBuffer[3] = 0;
+      TxUdpBuffer[0] = B01110011;         // s
+      TxUdpBuffer[1] = B00111010;         // :
+      if(IpSwitchEncoder<8){
+        TxUdpBuffer[2] = TxUdpBuffer[2] | (1<<IpSwitchEncoder); // set n-th bit
+      }else{
+        TxUdpBuffer[3] = TxUdpBuffer[3] | (1<<(IpSwitchEncoder-8)); // set n-th bit
+      }
+      TxUdpBuffer[4] = B00111011;         // ;
+      TxUdpBuffer[5] = 0;
+      UdpCommand.beginPacket(RemoteSwIP, RemoteSwPort);
+        UdpCommand.write(TxUdpBuffer, sizeof(TxUdpBuffer));   // send buffer
+        RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
+      UdpCommand.endPacket();
+      RemoteSwLatencyAnsw = 0;   // send command, wait to answer
+    }
+
+    // MQTT send
+    MqttPub("IpSWEncoder", 0, IpSwitchEncoder);
   }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -2333,9 +2429,9 @@ void readSDSettings(){
  }
  //-------------------------------------------------------------------------------------------------------
   void SetVariables(){
-    Loop[0] = MODE_AFTER_POWER_UP;     //  Mode
-    Loop[1] = MENU_AFTER_POWER_UP;     //  Menu
-    Loop[2] = MENU_AFTER_POWER_UP;     //  previous Menu
+    ActualMode = MODE_AFTER_POWER_UP;     //  Mode
+    ActualMenu = MENU_AFTER_POWER_UP;     //  Menu
+    PreviousMenu = MENU_AFTER_POWER_UP;     //  previous Menu
     YOUR_CALL.toCharArray(MenuTree[0], 15);
   }
 //-------------------------------------------------------------------------------------------------------
@@ -2406,7 +2502,7 @@ void AfterMQTTconnect(){
 }
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceInterlock(){      // <-------------- move to hw INTERRUPT?
-      if (digitalRead(INTERLOCK) == ptt_interlock_active && StatusArray[9] == LOW) {   // if change and not active from UDP
+      if (digitalRead(INTERLOCK) == ptt_interlock_active && InterlockFromUdpActive == LOW) {   // if change and not active from UDP
         ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
         if(ptt_interlock_active == 1  && SequencerLevel != 0){
           ptt_low(0);
@@ -2537,8 +2633,8 @@ void check_ptt_low(){
 void RemoteSwQuery(){
   if(ETHERNET_MODULE==1 && RemoteSwitch == 1){
     if(BAND != BandDecoderChange){    // if band change, send query udp packet
-      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP Switch for this band
-        detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
+      if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0){       // if detect IP Switch for this band
+        InterruptON(0);
         RemoteSwIP = DetectedRemoteSw[BandToRemoteSwitchID[BAND]];
         RemoteSwPort = DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4];
         // UDP send to Switch
@@ -2553,7 +2649,7 @@ void RemoteSwQuery(){
           RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
         UdpCommand.endPacket();
         RemoteSwLatencyAnsw = 0;   // send command, wait to answer
-        attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
+        InterruptON(1);
       }else{      // if IP sw n/a on this band, clear LED keyboard
         digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
         // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, B00000000);    // bankC
@@ -2570,12 +2666,12 @@ void RemoteSwQuery(){
 void IncomingUDP(){
   if(ETHERNET_MODULE==1){
     // detachInterrupt because this interrupt worked with ethernet also
-    detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
+    InterruptON(0);
     //-------------------------------
     // RTTY transmit incoming string
     UDPpacketSize = UdpRtty.parsePacket();    // if there's data available, read a packet
     if (UDPpacketSize){
-      if(Loop[0]==3 || Loop[0]==4){               // if mode FSK
+      if(ActualMode==3 || ActualMode==4){               // if mode FSK
         UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
         FSKmemory[0] = packetBuffer;
         FSKmemoryTX(0);
@@ -2610,23 +2706,29 @@ void IncomingUDP(){
       // Switch BROADCAST - STORAGE IP by received ID in 'DetectedRemoteSw' array (rows = Switch ID)
       if (packetBuffer[0] == 'b' && packetBuffer[1] == ':' && packetBuffer[2] == 's' && packetBuffer[4] == ';'){
         IPAddress TmpAddr = UdpCommand.remoteIP();
-        DetectedRemoteSw [(int)packetBuffer[3] - 48] [0]=TmpAddr[0];     // Switch IP addres storage to array
-        DetectedRemoteSw [(int)packetBuffer[3] - 48] [1]=TmpAddr[1];     // (int)packetBuffer[3] - 48 = convert char number to DEC
-        DetectedRemoteSw [(int)packetBuffer[3] - 48] [2]=TmpAddr[2];
-        DetectedRemoteSw [(int)packetBuffer[3] - 48] [3]=TmpAddr[3];
-        DetectedRemoteSw [(int)packetBuffer[3] - 48] [4]=UdpCommand.remotePort();
+        // DetectedRemoteSw [(int)packetBuffer[3] - 48] [0]=TmpAddr[0];     // Switch IP addres storage to array
+        // DetectedRemoteSw [(int)packetBuffer[3] - 48] [1]=TmpAddr[1];     // (int)packetBuffer[3] - 48 = convert char number to DEC
+        // DetectedRemoteSw [(int)packetBuffer[3] - 48] [2]=TmpAddr[2];
+        // DetectedRemoteSw [(int)packetBuffer[3] - 48] [3]=TmpAddr[3];
+        // DetectedRemoteSw [(int)packetBuffer[3] - 48] [4]=UdpCommand.remotePort();
+        DetectedRemoteSw [hexToDecBy4bit(packetBuffer[3])] [0]=TmpAddr[0];     // Switch IP addres storage to array
+        DetectedRemoteSw [hexToDecBy4bit(packetBuffer[3])] [1]=TmpAddr[1];
+        DetectedRemoteSw [hexToDecBy4bit(packetBuffer[3])] [2]=TmpAddr[2];
+        DetectedRemoteSw [hexToDecBy4bit(packetBuffer[3])] [3]=TmpAddr[3];
+        DetectedRemoteSw [hexToDecBy4bit(packetBuffer[3])] [4]=UdpCommand.remotePort();
         RemoteSwLatencyAnsw = 1;           // answer packet received
 
         // Serial2.println();
-        // Serial2.print("RX b:r");
+        // Serial2.print("RX b:s");
         // Serial2.print(packetBuffer[3]);
         // Serial2.println(";");
+        // Serial2.println(hexToDecBy4bit(packetBuffer[3]), HEX);
         //
         // Serial2.print(packetBuffer[3], DEC);
         // Serial2.println(" ");
         // Serial2.println((int)packetBuffer[3] - 48, DEC);
         //
-        // for (i = 0; i < 10; i++) {
+        // for (i = 0; i < 16; i++) {
         //   Serial2.print(i);
         //   Serial2.print("  ");
         //   Serial2.print(DetectedRemoteSw [i] [0]);
@@ -2648,10 +2750,10 @@ void IncomingUDP(){
           if(SequencerLevel != 0){   // if any PTT active
             ptt_low(0);
           }
-          StatusArray[9] = HIGH;
+          InterlockFromUdpActive = HIGH;
         }else if(packetBuffer[2] == '0'){
           ptt_interlock_active = B00000;
-          StatusArray[9] = LOW;
+          InterlockFromUdpActive = LOW;
         }
           MqttPub("interlock", 0, ptt_interlock_active);
       }
@@ -2664,10 +2766,10 @@ void IncomingUDP(){
             if(SequencerLevel != 0){   // if any PTT active
               ptt_low(0);
             }
-            StatusArray[9] = HIGH;
+            InterlockFromUdpActive = HIGH;
           }else if(packetBuffer[6] == 0){
             ptt_interlock_active = B00000;
-            StatusArray[9] = LOW;
+            InterlockFromUdpActive = LOW;
           }
           MqttPub("interlock", 0, ptt_interlock_active);
         }
@@ -2695,8 +2797,8 @@ void IncomingUDP(){
       if (packetBuffer[0] == 'm' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
         tmp = packetBuffer[2]-'0';  // convert to int for compare
         if(tmp >= 0 && tmp <= 5){
-          Loop[0] = tmp;
-          MqttPub("mode", 0, Loop[0]);
+          ActualMode = tmp;
+          MqttPub("mode", 0, ActualMode);
         }
       }
 
@@ -2764,7 +2866,7 @@ void IncomingUDP(){
   //    lcd.print("      ");
     memset(packetBuffer, 0, sizeof(packetBuffer));   // Clear contents of Buffer
     }
-    attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
+    InterruptON(1);
   }
 }
 
@@ -2776,9 +2878,25 @@ unsigned char hexToDecBy4bit(unsigned char hex)
   return(hex & 0xf);
 }
 //-------------------------------------------------------------------------------------------------------
+
+unsigned int hexToDec(String hexString) {
+    unsigned int decValue = 0;
+    int nextInt;
+    for (int i = 0; i < hexString.length(); i++) {
+        nextInt = int(hexString.charAt(i));
+        if (nextInt >= 48 && nextInt <= 57) nextInt = map(nextInt, 48, 57, 0, 9);
+        if (nextInt >= 65 && nextInt <= 70) nextInt = map(nextInt, 65, 70, 10, 15);
+        if (nextInt >= 97 && nextInt <= 102) nextInt = map(nextInt, 97, 102, 10, 15);
+        nextInt = constrain(nextInt, 0, 15);
+        decValue = (decValue * 16) + nextInt;
+    }
+    return decValue;
+}
+//-------------------------------------------------------------------------------------------------------
+
 void SendBroadcastUdpPTT(int status){         // Measured 2 ms
   if(ETHERNET_MODULE==1){
-    detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
+    InterruptON(0);
     BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
     TxUdpBuffer[0] = B01100010;         // b  - broadcast
     TxUdpBuffer[1] = B00111010;         // :
@@ -2791,13 +2909,13 @@ void SendBroadcastUdpPTT(int status){         // Measured 2 ms
     UdpCommand.beginPacket(BroadcastIP, BroadcastPort);   // Send to IP and port from recived UDP command
       UdpCommand.write(TxUdpBuffer, sizeof(TxUdpBuffer));   // send buffer
     UdpCommand.endPacket();
-    attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
+    InterruptON(1);
   }
 }
 //-------------------------------------------------------------------------------------------------------
 void SendBroadcastUdp(){
   if(ETHERNET_MODULE==1){
-    detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
+    InterruptON(0);
     BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
 
     UdpCommand.beginPacket(BroadcastIP, BroadcastPort);   // Send to IP and port from recived UDP command
@@ -2815,11 +2933,12 @@ void SendBroadcastUdp(){
     // Serial2.println(Timeout[8][0]);
 
     Timeout[8][0] = millis();                      // set time mark
-    attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);
+    InterruptON(1);
   }
 }
 //-------------------------------------------------------------------------------------------------------
 void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
+  InterruptON(0);
   if(ETHERNET_MODULE == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
     if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
       String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/" + path;
@@ -2843,9 +2962,11 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
       client.publish(mqttPath, mqttTX, true);
     }
   }
+  InterruptON(1);
 }
 //-------------------------------------------------------------------------------------------------------
 void MqttPubString(String path, String character){
+  InterruptON(0);
   if(ETHERNET_MODULE == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
     if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
       String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/" + path;
@@ -2861,6 +2982,7 @@ void MqttPubString(String path, String character){
       client.publish(mqttPath, mqttTX);
     }
   }
+  InterruptON(1);
 }
 //-------------------------------------------------------------------------------------------------------
 void DCinMeasure(){
@@ -2869,11 +2991,11 @@ void DCinMeasure(){
     if (DCinVoltage<8){
       lcd.setCursor(3, 0);
       lcd.print("Power LOW!");
-      Loop[1]= 2;
+      ActualMenu= 2;
     }else if (DCinVoltage>19){
       lcd.setCursor(2, 0);
       lcd.print("Power HIGH!");
-      Loop[1]= 2;
+      ActualMenu= 2;
     }
     Timeout[7][0] = millis();                      // set time mark
       MqttPub("pwrvoltage", DCinVoltage, 0);
@@ -2881,7 +3003,7 @@ void DCinMeasure(){
 }
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceLCD(){    // LCD
-    if (millis() - Timeout[0][0] > (Timeout[0][1])){
+    if (millis() - Timeout[0][0] > (Timeout[0][1]) || (ActualMenu==20 && millis() - (Timeout[0][0]/3) > (Timeout[0][1]))){   // menu 20 with 1/3 refresh delay
       // micro SD
       lcd.setCursor(15, 1);
       if(ptt_interlock_active == 1){
@@ -2896,13 +3018,13 @@ void OpenInterfaceLCD(){    // LCD
 
       // MENU
       lcd.setCursor(0, 1);
-      MenuToLCD(Loop[1]);
+      MenuToLCD(ActualMenu);
       Timeout[0][0] = millis();                      // set time mark
 
       // MODE
         lcd.setCursor(11, 1);
-      if(StatusArray[2] == LOW){        // Mode
-        lcd.print(modeLCD[Loop[0]][0]);
+      if(ModeMenuStatus == LOW){        // Mode
+        lcd.print(modeLCD[ActualMode][0]);
       }else{                            // Menu
         lcd.print(" <");
 
@@ -2912,10 +3034,10 @@ void OpenInterfaceLCD(){    // LCD
 //        }else{
 //          lcd.setCursor(12, 1);
 //        }
-        if(Loop[1]<10){
+        if(ActualMenu<10){
           lcd.print("0");
         }
-        lcd.print(Loop[1]);
+        lcd.print(ActualMenu);
       }
     }
 }
@@ -3084,21 +3206,21 @@ void MenuToLCD(int nr){
     }
     case 17:{ // MODE
       lcd.setCursor(CulumnPosition-1, 1);
-      lcd.print(modeLCD[Loop[0]][1]);
-      CulumnPosition=CulumnPosition+String(modeLCD[Loop[0]][1]).length()-1;
+      lcd.print(modeLCD[ActualMode][1]);
+      CulumnPosition=CulumnPosition+String(modeLCD[ActualMode][1]).length()-1;
     break;
     }
     case 18:{ // Buttons bank A
       lcd.setCursor(CulumnPosition-1, 1);
-      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP Switch for this band
+      if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0){       // if detect IP Switch for this band
         if(ACC_KEYBOARD == 1){                // if enable ACC shift in buttons
           if(RemoteSwLatencyAnsw==1){                // if receive answer packet
-            lcd.print(BAND);
+            lcd.print(BandToRemoteSwitchID[BAND]);
             lcd.print(":");
             lcd.print(PrintByte(rxShiftInButton[0]));
             CulumnPosition=CulumnPosition+String(rxShiftInButton[0]).length()-1;
           }else{
-            lcd.print(BAND);
+            lcd.print(BandToRemoteSwitchID[BAND]);
             lcd.print(": OFFline");
             CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
           }
@@ -3107,7 +3229,7 @@ void MenuToLCD(int nr){
           CulumnPosition=CulumnPosition+String(" Disable").length()-1;
         }
       }else{
-        lcd.print(BAND);
+        lcd.print(BandToRemoteSwitchID[BAND]);
         lcd.print(":   n/a");
         CulumnPosition=CulumnPosition+String(" :   n/a").length()-1;
       }
@@ -3115,15 +3237,15 @@ void MenuToLCD(int nr){
     }
     case 19:{ // Buttons bank B
       lcd.setCursor(CulumnPosition-1, 1);
-      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP for this band
+      if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0){       // if detect IP for this band
         if(ACC_KEYBOARD == 1){
           if(RemoteSwLatencyAnsw==1){                // if receive answer packet
-            lcd.print(BAND);
+            lcd.print(BandToRemoteSwitchID[BAND]);
             lcd.print(":");
             lcd.print(PrintByte(rxShiftInButton[1]));
             CulumnPosition=CulumnPosition+String(rxShiftInButton[1]).length()-1;
           }else{
-            lcd.print(BAND);
+            lcd.print(BandToRemoteSwitchID[BAND]);
             lcd.print(": OFFline");
             CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
           }
@@ -3132,7 +3254,7 @@ void MenuToLCD(int nr){
           CulumnPosition=CulumnPosition+String(" Disable").length()-1;
         }
       }else{
-        lcd.print(BAND);
+        lcd.print(BandToRemoteSwitchID[BAND]);
         lcd.print(":   n/a");
         CulumnPosition=CulumnPosition+String(" :   n/a").length()-1;
       }
@@ -3140,24 +3262,22 @@ void MenuToLCD(int nr){
     }
     case 20:{ // Buttons bank C
       lcd.setCursor(CulumnPosition-1, 1);
-      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP for this band
-        if(ACC_KEYBOARD == 1){
-          if(RemoteSwLatencyAnsw==1){                // if receive answer packet
-            lcd.print(BAND);
-            lcd.print(":");
-            lcd.print(PrintByte(rxShiftInButton[2]));
-            CulumnPosition=CulumnPosition+String(rxShiftInButton[2]).length()-1;
+      if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0){       // if detect IP for this band, +8 because bank C use upper ID 0x08-0x0F
+          if(RemoteSwLatencyAnsw==1 || (millis()-RemoteSwLatency[0]) < 500){       // if receive answer packet
+            lcd.print(BandToRemoteSwitchID[BAND]+8, HEX);
+            lcd.print(":   ");
+            if(IpSwitchEncoder+1<10){
+              lcd.print(" ");
+            }
+            lcd.print(IpSwitchEncoder+1);
+            CulumnPosition=CulumnPosition+String(IpSwitchEncoder).length()-1+6;
           }else{
-            lcd.print(BAND);
+            lcd.print(BandToRemoteSwitchID[BAND]+8, HEX);
             lcd.print(": OFFline");
             CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
           }
-        }else{
-          lcd.print(" Disable");
-          CulumnPosition=CulumnPosition+String(" Disable").length()-1;
-        }
       }else{
-        lcd.print(BAND);
+        lcd.print(BandToRemoteSwitchID[BAND]+8, HEX);
         lcd.print(":   n/a");
         CulumnPosition=CulumnPosition+String(" :   n/a").length()-1;
       }
@@ -3165,7 +3285,7 @@ void MenuToLCD(int nr){
     }
     case 21:{ // Last Switch command latency measure
       lcd.setCursor(CulumnPosition-1, 1);
-      if(DetectedRemoteSw[BAND][4]!=0){       // if detect IP for this band
+      if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0 || DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0){       // if detect IP for this band
         if(ACC_KEYBOARD == 1 && KeyboardAnswLed == 1){
           if(RemoteSwLatencyAnsw==1){                // if receive answer packet
             lcd.print(RemoteSwLatency[1]);
@@ -3188,13 +3308,12 @@ void MenuToLCD(int nr){
     case 22:{ // Network ID
       lcd.setCursor(CulumnPosition, 1);
       lcd.print(UNIQUE_ID, HEX);
-      lcd.print("h");
       CulumnPosition=CulumnPosition+String(UNIQUE_ID).length();
     break;
     }
 
   }
-  if(StatusArray[2] == LOW){        // Mode
+  if(ModeMenuStatus == LOW){        // Mode
     CulumnPositionEnd = 11;
   }else{
     CulumnPositionEnd = 12;
@@ -3219,52 +3338,52 @@ String PrintByte(byte ByteToPrint){
 }
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceMENUtimeout(){
-  if(Loop[2] != Loop[1]){
-    StatusArray[2] = HIGH;          // Menu
-    Loop[2] = Loop[1];
+  if(PreviousMenu != ActualMenu){
+    ModeMenuStatus = HIGH;          // Menu
+    PreviousMenu = ActualMenu;
     Timeout[1][0] = millis();                      // set time mark
   }
   if (millis() - Timeout[1][0] > (Timeout[1][1])){
-    StatusArray[2] = LOW;         // Mode
+    ModeMenuStatus = LOW;         // Mode
   }
 }
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceMENU(){
       OpenInterfaceMENUtimeout();
-      if (digitalRead(MENU) != StatusArray[0]) {   // reading != lastbuttonstate
+      if (digitalRead(MENU) != ModeLastButtonState) {   // reading != lastbuttonstate
           Timeout[5][0] = millis();                // reset debounce timer
-          StatusArray[0] = !StatusArray[0];
+          ModeLastButtonState = !ModeLastButtonState;
       }
       if ((millis() - Timeout[5][0]) > Timeout[5][1]) {      // over deobounce timer
-        if(digitalRead(MENU) == LOW && StatusArray[1] == HIGH){
+        if(digitalRead(MENU) == LOW && ModeDebouncedSignal == HIGH){
           Timeout[6][0] = millis();                          // reset true press timer
-          StatusArray[1] = LOW;                              // flip-flop
+          ModeDebouncedSignal = LOW;                              // flip-flop
         }
-        if(digitalRead(MENU) == HIGH && StatusArray[1] == LOW){
-          StatusArray[1] = HIGH;                             // flip-flop
+        if(digitalRead(MENU) == HIGH && ModeDebouncedSignal == LOW){
+          ModeDebouncedSignal = HIGH;                             // flip-flop
           if((millis() - Timeout[6][0]) < Timeout[6][1]){    // short detect
-            if(StatusArray[2] == LOW){                       // if MENU disable, MODE active
-              if (ptt_interlock_active == 1 && StatusArray[9] == HIGH) {   // if UDP Interlock ON
+            if(ModeMenuStatus == LOW){                       // if MENU disable, MODE active
+              if (ptt_interlock_active == 1 && InterlockFromUdpActive == HIGH) {   // if UDP Interlock ON
                 ptt_interlock_active = B00000;                            // manual UDP interlock OFF
                   MqttPub("interlock", 0, ptt_interlock_active);
               }else{
-                Loop[0]++;
-                if(Loop[0]==6){
-                  Loop[0]=0;
+                ActualMode++;
+                if(ActualMode==6){
+                  ActualMode=0;
                 }
-                  MqttPub("mode", 0, Loop[0]);
-                SwitchHardware(Loop[0]);
+                  MqttPub("mode", 0, ActualMode);
+                SwitchHardware(ActualMode);
               } // end if UDP Interlock ON
             }else{ // menu enable
-              Loop[1]++;
-              if(Loop[1] > MenuTreeSize-1){
-                Loop[1]=0;
+              ActualMenu++;
+              if(ActualMenu > MenuTreeSize-1){
+                ActualMenu=0;
               }
             }
             TON(1);
           }else{                                            // Long detect
-            StatusArray[2] = !StatusArray[2];               // MENU status
-            if(StatusArray[2] == HIGH){                     // if Menu
+            ModeMenuStatus = !ModeMenuStatus;               // MENU status
+            if(ModeMenuStatus == HIGH){                     // if Menu
               Timeout[1][0] = millis();                      // set time mark
             }
             TON(0);
@@ -3313,7 +3432,7 @@ void SwitchHardware(int SwitchHardwareMode){
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceMODE(){
   // MODE
-  switch (Loop[0]) { // MODE
+  switch (ActualMode) { // MODE
     case 0:{ // CW Keyer
       if (K3NG_KEYER == true){
         K3NG_key();
@@ -3323,12 +3442,12 @@ void OpenInterfaceMODE(){
     case 1:{ // CW PC
       if(digitalRead(PTT232)==HIGH){    // PTT-232
         ptt_high(PTTmodeCW);
-        if(StatusArray[3] == LOW){
-          StatusArray[3] = HIGH;
+        if(Ptt232Active == LOW){
+          Ptt232Active = HIGH;
         }
-      }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
+      }else if(digitalRead(PTT232)==LOW && Ptt232Active == HIGH){       // only if activate from PTT232
         ptt_low(PTTmodeCW);
-        StatusArray[3] = LOW;
+        Ptt232Active = LOW;
       }
       if (K3NG_KEYER == true){
         K3NG_key();
@@ -3338,14 +3457,14 @@ void OpenInterfaceMODE(){
     case 2:{ // SSB
       if(digitalRead(FootSW)==LOW || digitalRead(PTT232)==HIGH){   // FootSW / 232(usb audio-ssb pc memory) PTT
         ptt_high(PTTmodeSSB);
-        if(StatusArray[4] != 1){          // if change
-          StatusArray[4] = 1;
+        if(FootSwChange != 1){          // if change
+          FootSwChange = 1;
             MqttPub("footsw", 0, 1);
         }
       }else{
-        if(StatusArray[4] != 0){
+        if(FootSwChange != 0){
           ptt_low(PTTmodeSSB);
-          StatusArray[4] = 0;
+          FootSwChange = 0;
             MqttPub("footsw", 0, 0);
         }
       }
@@ -3361,11 +3480,11 @@ void OpenInterfaceMODE(){
       }
       if(digitalRead(PTT232)==HIGH){    // PTT-232
         ptt_high(PTTmodeFSK);
-        if(StatusArray[3] == LOW){
-          StatusArray[3] = HIGH;
+        if(Ptt232Active == LOW){
+          Ptt232Active = HIGH;
         }
-      }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
-        StatusArray[3] = LOW;
+      }else if(digitalRead(PTT232)==LOW && Ptt232Active == HIGH){       // only if activate from PTT232
+        Ptt232Active = LOW;
         ptt_low(PTTmodeFSK);
       }
       MenuEncoder();
@@ -3382,11 +3501,11 @@ void OpenInterfaceMODE(){
     case 5:{ // DIGITAL (AFSK)
       if(digitalRead(PTT232)==HIGH){    // PTT-232
         ptt_high(PTTmodeDIGI);
-        if(StatusArray[3] == LOW){
-          StatusArray[3] = HIGH;
+        if(Ptt232Active == LOW){
+          Ptt232Active = HIGH;
         }
-      }else if(digitalRead(PTT232)==LOW && StatusArray[3] == HIGH){       // only if activate from PTT232
-        StatusArray[3] = LOW;
+      }else if(digitalRead(PTT232)==LOW && Ptt232Active == HIGH){       // only if activate from PTT232
+        Ptt232Active = LOW;
         ptt_low(PTTmodeDIGI);
       }
       MenuEncoder();
@@ -3404,32 +3523,14 @@ int TON(int ToneType){
     }
   }
 }
-
-// ENCODER
-void MenuEncoder(){
-  if(digitalRead(encB) == LOW && EncPrev == 1){
-    if(digitalRead(encA) == LOW){
-      Loop[1]++;
-        if(Loop[1] > MenuTreeSize-1){
-          Loop[1]=0;
-        }
-    }else{
-      Loop[1]--;
-        if(Loop[1] < 0){
-          Loop[1]=MenuTreeSize-1;
-        }
-    }
-    EncPrev=0;
-  }else  if(digitalRead(encB) == HIGH && EncPrev == 0){
-    EncPrev=1;
-  }
-}
+//-------------------------------------------------------------------------------------------------------
 
 // VOLT
 float volt(int raw, float K, float DELTA) {
   float voltage = (raw * 5.0) / 1024.0 * K + DELTA;    // K - resistor coeficient
   return voltage;
 }
+//-------------------------------------------------------------------------------------------------------
 
 void ButtonFSK(){
   tmp = analogRead(MEM);
@@ -3521,6 +3622,7 @@ void FSKmemoryTX(int memory){
 // SERIAL TO FSK TX
 void Serial2FSK(){
     if (Serial.available()) {
+      InterruptON(0);
         fig1 = 1;                         // every shift to start message
         lcd.setCursor(positionCounter, 0);
         if (AFSK_ENABLE == true){
@@ -3589,7 +3691,7 @@ void Serial2FSK(){
           noTone(TONE);
         }
       }
-
+      InterruptON(1);
 }
 
 void sendFsk(){
@@ -3934,6 +4036,7 @@ void BandDecoder() {
 
         if (BAND_DECODER_IN == 1){  // ICOM_CIV
             if (Serial2.available() > 0) {
+              InterruptON(0);
                 incomingByte = Serial2.read();
                 icomSM(incomingByte);
                 rdIS="";
@@ -3961,8 +4064,9 @@ void BandDecoder() {
                     }
                 }
                 if(rdI[4]==0x04 && rdI[7]==0xFD){    // Mode - 04 command and state machine end
-                  Loop[0]=CIVModeSet[rdI[5]];        // set mode by CIVModeSet table 
+                  ActualMode=CIVModeSet[rdI[5]];        // set mode by CIVModeSet table
                 }
+                InterruptON(1);
             }
         }
 
@@ -4343,21 +4447,6 @@ int txCIVout(int commandCIV, long dataCIVtx, int toAddress) {
     Serial3.write(253);                                    // FD
     Serial3.flush();
 }
-
-unsigned int hexToDec(String hexString) {
-    unsigned int decValue = 0;
-    int nextInt;
-    for (int i = 0; i < hexString.length(); i++) {
-        nextInt = int(hexString.charAt(i));
-        if (nextInt >= 48 && nextInt <= 57) nextInt = map(nextInt, 48, 57, 0, 9);
-        if (nextInt >= 65 && nextInt <= 70) nextInt = map(nextInt, 65, 70, 10, 15);
-        if (nextInt >= 97 && nextInt <= 102) nextInt = map(nextInt, 97, 102, 10, 15);
-        nextInt = constrain(nextInt, 0, 15);
-        decValue = (decValue * 16) + nextInt;
-    }
-    return decValue;
-}
-
 // #OI3 END -------------------------------------------------------------------------------
 
 void K3NG_key()                                                      // changed from loop() #OI3
@@ -4409,7 +4498,7 @@ void K3NG_key()                                                      // changed 
     #endif //FEATURE_POTENTIOMETER
 
     #ifdef FEATURE_ROTARY_ENCODER
-      if(StatusArray[2] == HIGH){                     // if Menu                        ___
+      if(ModeMenuStatus == HIGH){                     // if Menu                        ___
         MenuEncoder();                                // activate Menu encoder             |
       }else{                                          // else                              | Modified for
         check_rotary_encoder();                       // CW keyer encoder (original line)  | #OI3
