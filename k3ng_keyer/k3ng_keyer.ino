@@ -1402,14 +1402,14 @@ int BandToRemoteSwitchID[12] = { /*
 IP Switch
   ID
  0-7  */
-  7,  // band 0 (no data)
-  1,  // Band #1 [160m]
-  2,  // Band #2  [80m]
-  3,  // Band #3  [40m]
-  4,  // Band #4  [30m]
-  5,  // Band #5  [20m]
+  0,  // band 0 (no data)
+  0,  // Band #1 [160m]
+  0,  // Band #2  [80m]
+  0,  // Band #3  [40m]
+  0,  // Band #4  [30m]
+  0,  // Band #5  [20m]
   0,  // Band #6  [17m]
-  6,  // Band #7  [15m]
+  0,  // Band #7  [15m]
   0,  // Band #8  [12m]
   0,  // Band #9  [10m]
   0,  // Band #10  [6m]
@@ -1417,7 +1417,8 @@ IP Switch
 };
 
 int IpSwBankCrange[8]= { /*
-number of IP switch bank C position  */
+number of IP switch bank C position
+ 2-16 range */
   16, // ID 8
   8,  // ID 9
   8,  // ID A
@@ -2662,6 +2663,14 @@ void RemoteSwQuery(){
   }
 }
 //-------------------------------------------------------------------------------------------------------
+int HowRemoteSwitchID(){
+  for (i = 0; i < 16; i++) {
+    if(UdpCommand.remoteIP() == DetectedRemoteSw[i]){
+      return i;
+    }
+  }
+}
+//-------------------------------------------------------------------------------------------------------
 // Incoming UDP commands
 void IncomingUDP(){
   if(ETHERNET_MODULE==1){
@@ -2686,7 +2695,7 @@ void IncomingUDP(){
       UdpCommand.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
 
       // Switch ANSWER > SET LED - Bank0-2
-      if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && packetBuffer[0] == 's' && packetBuffer[1] == ':'){
+      if (packetBuffer[0] == 's' && packetBuffer[1] == ':'){
         RemoteSwLatency[1] = (millis()-RemoteSwLatency[0])/2; // set latency (half path in ms us/2/1000)
         RemoteSwLatencyAnsw = 1;           // answer packet received
 
@@ -2695,12 +2704,16 @@ void IncomingUDP(){
         rxShiftInButton[1] = packetBuffer[3];
         rxShiftInButton[2] = packetBuffer[4];
 
-        digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
-        // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[4]);    // bankC
-        shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[3]);    // bankB
-        shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[2]);    // bankA
-        digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
+        // Serial2.print("Remote IP switch ID: ");
+        // Serial2.println(HowRemoteSwitchID());
 
+        if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && HowRemoteSwitchID()<7){ // and ID < 7
+          digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
+          // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[4]);    // bankC
+          shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[3]);    // bankB
+          shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[2]);    // bankA
+          digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
+        }
       }
 
       // Switch BROADCAST - STORAGE IP by received ID in 'DetectedRemoteSw' array (rows = Switch ID)
@@ -3003,7 +3016,7 @@ void DCinMeasure(){
 }
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceLCD(){    // LCD
-    if (millis() - Timeout[0][0] > (Timeout[0][1]) || (ActualMenu==20 && millis() - (Timeout[0][0]/3) > (Timeout[0][1]))){   // menu 20 with 1/3 refresh delay
+    if (millis() - Timeout[0][0] > (Timeout[0][1]) || (ActualMenu==20 && millis() - (Timeout[0][0]/2) > (Timeout[0][1]))){   // menu 20 with 1/3 refresh delay
       // micro SD
       lcd.setCursor(15, 1);
       if(ptt_interlock_active == 1){
@@ -4500,7 +4513,7 @@ void K3NG_key()                                                      // changed 
     #ifdef FEATURE_ROTARY_ENCODER
       if(ModeMenuStatus == HIGH){                     // if Menu                        ___
         MenuEncoder();                                // activate Menu encoder             |
-      }else{                                          // else                              | Modified for
+      }else if(ActualMenu!=20){                       // else                              | Modified for
         check_rotary_encoder();                       // CW keyer encoder (original line)  | #OI3
       }                                               // endif                          ___|
     #endif //FEATURE_ROTARY_ENCODER
