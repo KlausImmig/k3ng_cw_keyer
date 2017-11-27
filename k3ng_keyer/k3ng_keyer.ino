@@ -1309,7 +1309,7 @@ boolean K3NG_KEYER      = 1;          // enable CW keyer
 boolean FSK_TX          = 1;          // enable RTTY keying
 boolean FSK_RX          = 1;          // enable RTTY decoder - EXPERIMENTAL!
 //=============================
-byte UNIQUE_ID          = 0x01;       // [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
+byte UNIQUE_ID          = 0x02;       // [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
 //=============================
 boolean MQTT_ENABLE     = 0;          // enable public to MQTT broker
 int MQTT_PORT           = 1883;       // MQTT broker PORT
@@ -1662,6 +1662,8 @@ byte SequencerLevel = 0;   // 0 = off, 1-2-3 = PTT1-2-3, 4 = PA, 5 = SEQ
 float DCinVoltage;
 int i = 0;
 int tmp = 0;
+boolean LcdNeedRefresh = 0;
+
 
 // int Loop[3] = {MODE_AFTER_POWER_UP, MENU_AFTER_POWER_UP, MENU_AFTER_POWER_UP};     //  Mode, Menu, previous Menu
 int ActualMode = MODE_AFTER_POWER_UP;
@@ -2207,6 +2209,7 @@ void MenuEncoder(){
           }
       }
       EncPrev=0;
+      LcdNeedRefresh = 1;
     }else  if(digitalRead(encB) == HIGH && EncPrev == 0){
       EncPrev=1;
     }
@@ -2699,15 +2702,16 @@ void IncomingUDP(){
         RemoteSwLatency[1] = (millis()-RemoteSwLatency[0])/2; // set latency (half path in ms us/2/1000)
         RemoteSwLatencyAnsw = 1;           // answer packet received
 
-        // need if RX answer from band change query
-        rxShiftInButton[0] = packetBuffer[2];
-        rxShiftInButton[1] = packetBuffer[3];
-        rxShiftInButton[2] = packetBuffer[4];
 
-        // Serial2.print("Remote IP switch ID: ");
-        // Serial2.println(HowRemoteSwitchID());
+        if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && HowRemoteSwitchID()<7){ // and ID < 7 (bank A/B)
+          // Serial2.print("Remote IP switch ID: ");
+          // Serial2.println(HowRemoteSwitchID());
 
-        if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && HowRemoteSwitchID()<7){ // and ID < 7
+          // need if RX answer from band change query
+          rxShiftInButton[0] = packetBuffer[2];
+          rxShiftInButton[1] = packetBuffer[3];
+          rxShiftInButton[2] = packetBuffer[4];
+
           digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
           // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[4]);    // bankC
           shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, packetBuffer[3]);    // bankB
@@ -3016,7 +3020,7 @@ void DCinMeasure(){
 }
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceLCD(){    // LCD
-    if (millis() - Timeout[0][0] > (Timeout[0][1]) || (ActualMenu==20 && millis() - (Timeout[0][0]/2) > (Timeout[0][1]))){   // menu 20 with 1/3 refresh delay
+    if (millis() - Timeout[0][0] > (Timeout[0][1]) || LcdNeedRefresh == 1 || (ActualMenu==20 && millis() - (Timeout[0][0]/2) > (Timeout[0][1]))){   // menu 20 with 1/3 refresh delay
       // micro SD
       lcd.setCursor(15, 1);
       if(ptt_interlock_active == 1){
@@ -3051,6 +3055,9 @@ void OpenInterfaceLCD(){    // LCD
           lcd.print("0");
         }
         lcd.print(ActualMenu);
+      }
+      if (LcdNeedRefresh == 1){
+        LcdNeedRefresh = 0;
       }
     }
 }
