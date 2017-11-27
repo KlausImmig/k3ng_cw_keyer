@@ -1309,7 +1309,7 @@ boolean K3NG_KEYER      = 1;          // enable CW keyer
 boolean FSK_TX          = 1;          // enable RTTY keying
 boolean FSK_RX          = 1;          // enable RTTY decoder - EXPERIMENTAL!
 //=============================
-byte UNIQUE_ID          = 0x02;       // [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
+byte UNIQUE_ID          = 0x01;       // [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
 //=============================
 boolean MQTT_ENABLE     = 0;          // enable public to MQTT broker
 int MQTT_PORT           = 1883;       // MQTT broker PORT
@@ -2512,6 +2512,7 @@ void OpenInterfaceInterlock(){      // <-------------- move to hw INTERRUPT?
           ptt_low(0);
         }
         MqttPub("interlock", 0, ptt_interlock_active);
+        LcdNeedRefresh = 1;
     }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -2772,7 +2773,8 @@ void IncomingUDP(){
           ptt_interlock_active = B00000;
           InterlockFromUdpActive = LOW;
         }
-          MqttPub("interlock", 0, ptt_interlock_active);
+        MqttPub("interlock", 0, ptt_interlock_active);
+        LcdNeedRefresh = 1;
       }
 
       // INTERLOCK 2 broadcast [b:o#*ps;]  #- open interface ID, *- band number s- PTT 0/1
@@ -2789,6 +2791,7 @@ void IncomingUDP(){
             InterlockFromUdpActive = LOW;
           }
           MqttPub("interlock", 0, ptt_interlock_active);
+          LcdNeedRefresh = 1;
         }
       }
 
@@ -3386,6 +3389,7 @@ void OpenInterfaceMENU(){
               if (ptt_interlock_active == 1 && InterlockFromUdpActive == HIGH) {   // if UDP Interlock ON
                 ptt_interlock_active = B00000;                            // manual UDP interlock OFF
                   MqttPub("interlock", 0, ptt_interlock_active);
+                  LcdNeedRefresh = 1;
               }else{
                 ActualMode++;
                 if(ActualMode==6){
