@@ -1705,11 +1705,11 @@ char* MenuTree[23]= { // [radky][sloupce]
   "PTTlead",         // 15
   "PTTtail",         // 16
   "",                // 17  MODE fullname
-  "A",               // 18  Switch bankA
-  "B",               // 19  Switch bankB
-  "C",               // 20  Switch bankC
-  "Lat ",            // 21  Last Switch changed latency [ms]
-  "NetID ",          // 22  Last Switch changed latency [ms]
+  "A",               // 18  Switch bankA - eight independent ON/OFF keyboard button
+  "B",               // 19  Switch bankB - one from eight keyboard button
+  "C",               // 20  Switch bankC - one from up to 16 (define in IpSwBankCrange array for each band) selected with left encoder
+  "Latency ",        // 21  Last Switch changed latency [ms]
+  "NetID ",          // 22  Unique network ID
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -2180,6 +2180,7 @@ void AccKeyboardShift(){    // run from interrupt
       shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[0]);    // bank0
       digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
     }
+    LcdNeedRefresh = 1;
   }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -2259,6 +2260,7 @@ void EncoderInterrupt(){
 
     // MQTT send
     MqttPub("IpSWEncoder", 0, IpSwitchEncoder);
+    LcdNeedRefresh=1;
   }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -3023,7 +3025,7 @@ void DCinMeasure(){
 }
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceLCD(){    // LCD
-    if (millis() - Timeout[0][0] > (Timeout[0][1]) || LcdNeedRefresh == 1 || (ActualMenu==20 && millis() - (Timeout[0][0]/2) > (Timeout[0][1]))){   // menu 20 with 1/3 refresh delay
+    if (millis() - Timeout[0][0] > (Timeout[0][1]) || LcdNeedRefresh == 1){// || (ActualMenu==20 && millis() - (Timeout[0][0]/2) > (Timeout[0][1]))){   // menu 20 with 1/3 refresh delay
       // micro SD
       lcd.setCursor(15, 1);
       if(ptt_interlock_active == 1){
@@ -3237,7 +3239,7 @@ void MenuToLCD(int nr){
       lcd.setCursor(CulumnPosition-1, 1);
       if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0){       // if detect IP Switch for this band
         if(ACC_KEYBOARD == 1){                // if enable ACC shift in buttons
-          if(RemoteSwLatencyAnsw==1){                // if receive answer packet
+          if(RemoteSwLatencyAnsw==1 || (RemoteSwLatencyAnsw==0 && millis() < RemoteSwLatency[0]+RemoteSwLatency[1]*5)){ // if answer ok, or latency measure nod end
             lcd.print(BandToRemoteSwitchID[BAND]);
             lcd.print(":");
             lcd.print(PrintByte(rxShiftInButton[0]));
@@ -3262,7 +3264,7 @@ void MenuToLCD(int nr){
       lcd.setCursor(CulumnPosition-1, 1);
       if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0){       // if detect IP for this band
         if(ACC_KEYBOARD == 1){
-          if(RemoteSwLatencyAnsw==1){                // if receive answer packet
+          if(RemoteSwLatencyAnsw==1 || (RemoteSwLatencyAnsw==0 && millis() < RemoteSwLatency[0]+RemoteSwLatency[1]*5)){ // if answer ok, or latency measure nod end
             lcd.print(BandToRemoteSwitchID[BAND]);
             lcd.print(":");
             lcd.print(PrintByte(rxShiftInButton[1]));
@@ -3286,7 +3288,7 @@ void MenuToLCD(int nr){
     case 20:{ // Buttons bank C
       lcd.setCursor(CulumnPosition-1, 1);
       if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0){       // if detect IP for this band, +8 because bank C use upper ID 0x08-0x0F
-          if(RemoteSwLatencyAnsw==1 || (millis()-RemoteSwLatency[0]) < 500){       // if receive answer packet
+          if(RemoteSwLatencyAnsw==1 || (RemoteSwLatencyAnsw==0 && millis() < RemoteSwLatency[0]+RemoteSwLatency[1]*5)){//(millis()-RemoteSwLatency[0]) < 500){       // if receive answer packet
             lcd.print(BandToRemoteSwitchID[BAND]+8, HEX);
             lcd.print(":   ");
             if(IpSwitchEncoder+1<10){
@@ -3310,7 +3312,7 @@ void MenuToLCD(int nr){
       lcd.setCursor(CulumnPosition-1, 1);
       if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0 || DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0){       // if detect IP for this band
         if(ACC_KEYBOARD == 1 && KeyboardAnswLed == 1){
-          if(RemoteSwLatencyAnsw==1){                // if receive answer packet
+          if(RemoteSwLatencyAnsw==1 || (RemoteSwLatencyAnsw==0 && millis() < RemoteSwLatency[0]+RemoteSwLatency[1]*5)){ // if answer ok, or latency measure nod end
             lcd.print(RemoteSwLatency[1]);
             lcd.print("ms");
             CulumnPosition=CulumnPosition+String(RemoteSwLatency[1]).length()-1;
