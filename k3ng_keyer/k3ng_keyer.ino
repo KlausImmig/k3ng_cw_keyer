@@ -1303,6 +1303,7 @@ boolean ACC_KEYBOARD    = 1;          // Shift in/out register via ACC
 boolean RemoteSwitch    = 1;          // IP controled remote RemoteSwitch
 boolean KeyboardAnswLed = 1;          // Keyboard Led shown answered UDP packet from IP RemoteSwitch
                                       // + latency measure. Disable set localy
+boolean GpsTime         = 1;          // External GPS via ACC
 
 // FEATURES AND OPTIONS
 boolean K3NG_KEYER      = 1;          // enable CW keyer
@@ -1342,7 +1343,7 @@ int UDP_COMMAND_PORT    = 88;         // UDP port listen to command
                                       //        ? c = Controller, # = ID
 
 String YOUR_CALL        = "Your Call";
-int MODE_AFTER_POWER_UP = 3;          // MODE after start up
+int MODE_AFTER_POWER_UP = 0;          // MODE after start up
 int MENU_AFTER_POWER_UP = 2;          // MENU after start up
 boolean BUTTON_BEEP     = 1;          // Mode button beep enable
 
@@ -1509,6 +1510,13 @@ File myFile;
 String ConfigFile="oi0.cfg";
 char charConfigFile[8]; // length +1
 
+// GpsTime
+int SERBAUD3                  = 9600;       // Serial3 in/out baudrate in ACC connector
+long GpsTimeMillis[2];
+char ReadGpsData[100];
+String ReadGpsDataString;
+int GpsUtc[3];
+
 // Serial2FSK (FSK TX)
 int SERBAUD0                  = 1200;       // Serial0 in/out baudrate (seria2fsk), if set 1200 may be controled as winkey
 boolean AFSK_ENABLE           = 0;          // AFSK AUDIO (serial2fsk, fsk memory)
@@ -1602,7 +1610,7 @@ byte SequencerLevel = 0;   // 0 = off, 1-2-3 = PTT1-2-3, 4 = PA, 5 = SEQ
   const int ACC13 = A4;
   const int ACC14 = A8;
   const int ACC15 = 21;     // SCL/interrupt/ if enable ACC SHIFT OUT KEYBOARD
-  const int ACC16 = 20;     // SDA
+  const int ACC16 = 20;     // SDA/interrupt/ if enable GpsTime
   const int ACC17 = A9;
   const int ACC19 = A11;    // if define Icom ACC voltage input
   const int SelfRES = 39;
@@ -1686,7 +1694,7 @@ char* modeLCD[6][2]= {
     {"|DIG", "Data  AFSK"},
 };
 
-char* MenuTree[23]= { // [radky][sloupce]
+char* MenuTree[24]= { // [radky][sloupce]
   "Your Call",         //  0 call
   "PCB 3.1415",      //  1
   "DCin",            //  2
@@ -1710,6 +1718,7 @@ char* MenuTree[23]= { // [radky][sloupce]
   "C",               // 20  Switch bankC - one from up to 16 (define in IpSwBankCrange array for each band) selected with left encoder
   "Latency ",        // 21  Last Switch changed latency [ms]
   "NetID ",          // 22  Unique network ID
+  "utc",            // 23  GPS
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -2056,6 +2065,14 @@ void setup()
     }
     SendBroadcastUdp();
   }
+
+  // GpsTime
+  if (GpsTime==1){
+    pinMode(ACC16, INPUT);
+    Serial3.begin(SERBAUD3);
+    // Serial3.setTimeout(10);
+    // Serial.begin(9600);
+  }
   SwitchHardware(MODE_AFTER_POWER_UP);
   InterruptON(1);
 } // SETUP END
@@ -2080,6 +2097,54 @@ void loop() {
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
 // http://www.catonmat.net/blog/low-level-bit-hacks-you-absolutely-must-know/
+
+void GpsPpsInterrupt(){
+  // GpsTimeMillis[0]=millis();
+  /* NMEA
+  $GPGGA,215003.000,5008.3660,N,01428.8084,E,1,7,1.21,297.4,M,45.5,M,,*55
+  $GPGSA,A,3,24,29,12,06,19,02,25,,,,,,1.500,A,5008.3660,N,01428.8084,E,07,,,A*53
+  $GPVTG,33.69,T,,M,0.3
+  $GPGGA,215004.000,5008.3661,N,01428.8085,E,1,7,1.21,297.4,M,45.5,M,,*52
+  */
+
+  if (Serial3.available()) {
+    Serial3.readBytesUntil('$', ReadGpsData, 50);       // fill array from serial
+
+    // for (int i=0; i<99; i++){
+    //     Serial.print(ReadGpsData[i]);
+    //     Serial.print("|");
+    // }
+    // Serial.println();
+
+    // if string begin GPGGA,
+    if(ReadGpsData[0]==71 && ReadGpsData[1]==80 && ReadGpsData[2]==71 && ReadGpsData[3]==71 && ReadGpsData[4]==65 && ReadGpsData[5]==44){
+
+      ReadGpsDataString = "";
+      ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[6]) + String(ReadGpsData[7]); // append variable to string
+      GpsUtc[0]=ReadGpsDataString.toInt();  // HH
+
+      ReadGpsDataString = "";
+      ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[8]) + String(ReadGpsData[9]); // append variable to string
+      GpsUtc[1]=ReadGpsDataString.toInt();  // MM
+
+      ReadGpsDataString = "";
+      ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[10]) + String(ReadGpsData[11]); // append variable to string
+      GpsUtc[2]=ReadGpsDataString.toInt();  // SS
+
+      // Serial.print(GpsUtc[0]);
+      //   Serial.print(":");
+      // Serial.print(GpsUtc[1]);
+      //   Serial.print(":");
+      // Serial.println(GpsUtc[2]);
+
+    }
+  }
+  Serial3.flush();
+  if(ActualMenu==23){
+    LcdNeedRefresh=1;
+  }
+}
+//-------------------------------------------------------------------------------------------------------
 
 void AccKeyboardShift(){    // run from interrupt
   if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0 && SequencerLevel == 0){       // if detect IP Switch for this band and PTT OFF
@@ -2188,9 +2253,15 @@ void InterruptON(int IntSw){
   if(IntSw==0){
     detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
     detachInterrupt(digitalPinToInterrupt(encB));
+    if(GpsTime==1){
+      detachInterrupt(digitalPinToInterrupt(ACC16));
+    }
   }else{
     attachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin), AccKeyboardShift, RISING);  // need detachInterrupt in IncomingUDP() subroutine
     attachInterrupt(digitalPinToInterrupt(encB), EncoderInterrupt, FALLING);
+    if(GpsTime==1){
+      attachInterrupt(digitalPinToInterrupt(ACC16), GpsPpsInterrupt, FALLING);
+    }
   }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -3317,16 +3388,16 @@ void MenuToLCD(int nr){
             lcd.print("ms");
             CulumnPosition=CulumnPosition+String(RemoteSwLatency[1]).length()-1;
           }else{
-            lcd.print("OFFline");
-            CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
+            lcd.print("OFF");
+            CulumnPosition=CulumnPosition+String(" : OFF").length()-1;
           }
         }else{
-          lcd.print(" Disable");
-          CulumnPosition=CulumnPosition+String("RelAnsw OFF").length()-1;
+          lcd.print("Dis");
+          CulumnPosition=CulumnPosition+String("Dis").length()-1;
         }
       }else{
-        lcd.print("  n/a");
-        CulumnPosition=CulumnPosition+String("  n/a").length()-1;
+        lcd.print("n/a");
+        CulumnPosition=CulumnPosition+String("n/a").length()-1;
       }
     break;
     }
@@ -3334,6 +3405,31 @@ void MenuToLCD(int nr){
       lcd.setCursor(CulumnPosition, 1);
       lcd.print(UNIQUE_ID, HEX);
       CulumnPosition=CulumnPosition+String(UNIQUE_ID).length();
+    break;
+    }
+    case 23:{ // GpsTime
+      lcd.setCursor(CulumnPosition-1, 1);
+      if(GpsTime=1){
+        if(GpsUtc[0]<10){
+          lcd.print("0");
+        }
+        lcd.print(GpsUtc[0]);
+        lcd.print(":");
+        if(GpsUtc[1]<10){
+          lcd.print("0");
+        }
+        lcd.print(GpsUtc[1]);
+        lcd.print(":");
+        if(GpsUtc[2]<10){
+          lcd.print("0");
+        }
+        lcd.print(GpsUtc[2]);
+        CulumnPosition=CulumnPosition+String("xx:xx:xx").length();
+      }else{
+        lcd.print(" n/a");
+        CulumnPosition=CulumnPosition+String(" n/a").length();
+      }
+      // lcd.print(GpsTimeMillis[0], DEC);
     break;
     }
 
