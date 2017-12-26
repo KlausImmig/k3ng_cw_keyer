@@ -1299,19 +1299,22 @@ unsigned long automatic_sending_interruption_time = 0;
 #define PCB_REV_3_1415                // revision of PCB
 #define VOLTAGE_MEASURE_ADJUST 0.3    // ofset for precise adjust voltage measure
 // Add-ons
-boolean ETHERNET_MODULE = 1;          // enable ETHERNET module (must be installed) EXPERIMENTAL
-boolean ACC_KEYBOARD    = 1;          // Shift in/out register via ACC
-boolean RemoteSwitch    = 1;          // IP controled remote RemoteSwitch
+boolean ETHERNET_MODULE = 1;          // enable USR-ES1 ETHERNET module (must be installed)
+boolean ACC_KEYBOARD    = 1;          // Shift in/out register via ACC https://remoteqth.com/wiki/index.php?page=ACC+Keyboard+for+Open+Interface+III
+boolean RemoteSwitch    = 1;          // IP controled remote RemoteSwitch https://remoteqth.com/wiki/index.php?page=IP+Switch+with+ESP32-GATEWAY
 boolean KeyboardAnswLed = 1;          // Keyboard Led shown answered UDP packet from IP RemoteSwitch
                                       // + latency measure. Disable set localy
-boolean GpsTime         = 1;          // External GPS via ACC
+boolean GpsTime         = 1;          // External GPS via ACC [FGPMMOPA6H chip] https://remoteqth.com/outdoor-gps-module.php
+                                      // also enabled SOxQ proxy (Single Operator [x] QTH) orchestra
+                                      // If GPS synchronous time, received ascii on 89 UDP port formated with UTC time and send to some QTHs on command port 88
+                                      // IP set manually in 'SOxQorchestraIP' array
 
 // FEATURES AND OPTIONS
 boolean K3NG_KEYER      = 1;          // enable CW keyer
 boolean FSK_TX          = 1;          // enable RTTY keying
 boolean FSK_RX          = 1;          // enable RTTY decoder - EXPERIMENTAL!
 //=============================
-byte UNIQUE_ID          = 0x01;       // [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
+byte UNIQUE_ID          = 0x02;       // [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
 //=============================
 boolean MQTT_ENABLE     = 0;          // enable public to MQTT broker
 int MQTT_PORT           = 1883;       // MQTT broker PORT
@@ -1343,14 +1346,15 @@ int UDP_COMMAND_PORT    = 88;         /* UDP port listen to RX command
                                              ? r = Rotator, # = ID
                                              ? c = Controller, # = ID
 
-                                      w:####:[msg]; - CW transmit (not implemented yet)
-                                                      #### UTC time when msg was be send [millis in hex]
-                                                      [msg] transmit message
+                                      w:#######:[msg]; - CW transmit (not implemented yet)
+                                                        [echo -n "w:000000f:cq de ok1hra ok1hra test k;" | nc -u -w1 192.168.1.19 88]
+                                                        ####### UTC time when msg was be send [millis in hex]
+                                                        [msg] transmit message
 */
 
 String YOUR_CALL        = "Your Call";
 int MODE_AFTER_POWER_UP = 0;          // MODE after start up
-int MENU_AFTER_POWER_UP = 2;          // MENU after start up
+int MENU_AFTER_POWER_UP = 23;          // MENU after start up
 boolean BUTTON_BEEP     = 1;          // Mode button beep enable
 
 int SEQUENCERlead       = 0;          // SEQUENCER output lead delay ms between SEQ-->PA
@@ -1491,8 +1495,9 @@ char* ANTname[12] = {
   EthernetClient ethClient;
   PubSubClient client(ethClient);
 //  PubSubClient client(server, 1883, callback, ethClient);
-  unsigned int UdpCommandPort = 88;       // local UDP port to listen on
-  unsigned int UdpRttyPort = 89;          // local UDP port to listen on
+  unsigned int UdpCommandPort = 88;       // local UDP port listen to command
+  unsigned int UdpRttyPort = 89;          // local UDP port listen to CW/RTTY transmit
+  #define UDP_TX_PACKET_MAX_SIZE 40       // MIN 30
   char packetBuffer[UDP_TX_PACKET_MAX_SIZE]; //buffer to hold incoming packet,
   int UDPpacketSize;
   char mqttTX[50];
@@ -1517,22 +1522,20 @@ String ConfigFile="oi0.cfg";
 char charConfigFile[8]; // length +1
 
 // GpsTime
-int SERBAUD3                  = 9600;       // Serial3 in/out baudrate in ACC connector
-long GpsTimeMillis[3];                      // 0-PPS millis, 1-UTC millis, 2= 1-0
+int SERBAUD3                  = 9600;       // Serial3 in/out baudrate in ACC connector [FGPMMOPA6H chip]
+long GpsTimeMillis[3];                      // 0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
 char ReadGpsData[70];
 String ReadGpsDataString;
 long GpsUtc[3];
 byte GpsBufferPos  = 0;
+long TxUtcTimeMillis;
+long TxTimeMillis;
 
-char GpsRxBuffer[120];
-byte GpsCommaPos[20];
-byte GpsBufferStat = 0;
-char GpsDataValid[2];
-char GpsTimeUtc[12];
-char GpsLatitude[14];
-char GpsLongitude[14];
-char GpsLat[2];
-char GpsLon[2];
+// SOxQ orchestra - need GPS
+IPAddress SO1QIP(192, 168, 1, 200);               // remote QTH IP - set from SOxQorchestraIP array
+int SO1QPort = 88;                           // remote QTH port
+IPAddress SO2QIP(192, 168, 1, 42);               // remote QTH IP - set from SOxQorchestraIP array
+int SO2QPort = 88;                           // remote QTH port
 
 // Serial2FSK (FSK TX)
 int SERBAUD0                  = 1200;       // Serial0 in/out baudrate (seria2fsk), if set 1200 may be controled as winkey
@@ -1703,6 +1706,7 @@ byte Eth[8] = {0b00000, 0b00000, 0b11111, 0b10001, 0b10001, 0b11011, 0b11111, 0b
 byte InterlockChar[8] = {0b00100, 0b01010, 0b01010, 0b11111, 0b11011, 0b11011, 0b11111, 0b00000};
 byte Lpipe[8] = {0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b00000};
 byte Rpipe[8] = {0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b00000};
+byte delta[8] = {0B00000, 0B00000, 0B00100, 0B01010, 0B11111, 0B00000, 0B00000, 0B00000};
 char* modeLCD[6][2]= {
     {"|CWK", "CW keyer  "},
     {">CWD", "PC DTR/RTS"},
@@ -1712,7 +1716,7 @@ char* modeLCD[6][2]= {
     {"|DIG", "Data  AFSK"},
 };
 
-char* MenuTree[25]= { // [radky][sloupce]
+char* MenuTree[26]= { // [radky][sloupce]
   "Your Call",         //  0 call
   "PCB 3.1415",      //  1
   "DCin",            //  2
@@ -1737,7 +1741,8 @@ char* MenuTree[25]= { // [radky][sloupce]
   "Latency ",        // 21  Last Switch changed latency [ms]
   "NetID ",          // 22  Unique network ID
   "utc",             // 23  GPS time
-  "",                // 23  GPS millis
+  "D ",              // 23  difference between UTC in millis and internal millis timer
+  "",                // 24  SOxQ orchestra status
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -1959,6 +1964,7 @@ void setup()
   lcd.createChar(5, InterlockChar);
   lcd.createChar(6, Lpipe);
   lcd.createChar(7, Rpipe);
+  lcd.createChar(8, delta);
   lcd.begin(16, 2);
   lcd.setCursor(2, 1);
 //            lcd.print((char)188);
@@ -2085,7 +2091,7 @@ void setup()
     SendBroadcastUdp();
   }
 
-  // GpsTime
+  // GpsTime [FGPMMOPA6H chip]
   if (GpsTime==1){
     pinMode(ACC16, INPUT);
     Serial3.begin(SERBAUD3);
@@ -2096,6 +2102,10 @@ void setup()
   }
   SwitchHardware(MODE_AFTER_POWER_UP);
   InterruptON(1,1,1); // keyb, enc, gps
+
+  Serial.begin(9600);
+
+
 } // SETUP END
 
 //-------------------------------------------------------------------------------------------------------
@@ -2131,7 +2141,6 @@ void GpsPpsInterrupt(){    // run from interrupt
   $PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29<CR><LF>
   restore
   $PMTK314,1,1,1,1,1,5,0,0,0,0,0,0,0,0,0,0,0,0,0*2C<CR><LF>
-
   Sample
   $GPGGA,215003.000,5008.3660,N,01428.8084,E,1,7,1.21,297.4,M,45.5,M,,*55
   */
@@ -2139,52 +2148,56 @@ void GpsPpsInterrupt(){    // run from interrupt
   // Read 64 byte serial buffer
   // $GPGGA,215003.000,5008.3660,N,01428.8084,E,1,7,1.21,297.4,M,45.
   ReadGpsData[42] = 0; // reset quality byte
-  while(Serial3.available()){
-    ReadGpsData[GpsBufferPos] = Serial3.read();
-    if(ReadGpsData[GpsBufferPos]=='$'){ // sync start
-      GpsBufferPos=0;
-    }else{
-      Serial.print(ReadGpsData[GpsBufferPos]);
-      GpsBufferPos++;
+  if(SequencerLevel == 0){    // if PTT OFF
+    while(Serial3.available()){
+      ReadGpsData[GpsBufferPos] = Serial3.read();
+      if(ReadGpsData[GpsBufferPos]=='$'){ // sync start
+        GpsBufferPos=0;
+      }else{
+        // Serial.print(ReadGpsData[GpsBufferPos]);
+        GpsBufferPos++;
+      }
     }
-  }
-  Serial.println();
-  GpsBufferPos=0;
+    // Serial.println();
+    GpsBufferPos=0;
 
-  // if quality byte 1 or 2, and begin GPGGA string
-  if( (ReadGpsData[42]=='1' || ReadGpsData[42]=='2') && ReadGpsData[0]==71 && ReadGpsData[1]==80 && ReadGpsData[2]==71 && ReadGpsData[3]==71 && ReadGpsData[4]==65 && ReadGpsData[5]==44){
-    GpsTimeMillis[0] = millis() ;
+    // if quality byte 1 or 2, and begin GPGGA string
+    if( (ReadGpsData[42]=='1' || ReadGpsData[42]=='2') && ReadGpsData[0]==71 && ReadGpsData[1]==80 && ReadGpsData[2]==71 && ReadGpsData[3]==71 && ReadGpsData[4]==65 && ReadGpsData[5]==44){
+      GpsTimeMillis[0] = millis() ;   // 0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
 
-    ReadGpsDataString = "";
-    ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[6]) + String(ReadGpsData[7]); // append variable to string
-    GpsUtc[0]=ReadGpsDataString.toInt();  // HH
+      ReadGpsDataString = "";
+      ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[6]) + String(ReadGpsData[7]); // append variable to string
+      GpsUtc[0]=ReadGpsDataString.toInt();  // HH
 
-    ReadGpsDataString = "";
-    ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[8]) + String(ReadGpsData[9]); // append variable to string
-    GpsUtc[1]=ReadGpsDataString.toInt();  // MM
+      ReadGpsDataString = "";
+      ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[8]) + String(ReadGpsData[9]); // append variable to string
+      GpsUtc[1]=ReadGpsDataString.toInt();  // MM
 
-    ReadGpsDataString = "";
-    ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[10]) + String(ReadGpsData[11]); // append variable to string
-    GpsUtc[2]=ReadGpsDataString.toInt();  // SS
+      ReadGpsDataString = "";
+      ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[10]) + String(ReadGpsData[11]); // append variable to string
+      GpsUtc[2]=ReadGpsDataString.toInt();  // SS
 
-    // Serial.print(GpsUtc[0]);
-    //   Serial.print(":");
-    // Serial.print(GpsUtc[1]);
-    //   Serial.print(":");
-    // Serial.print(GpsUtc[2]);
-    // Serial.print(" ");
+      // Serial.print(GpsUtc[0]);
+      //   Serial.print(":");
+      // Serial.print(GpsUtc[1]);
+      //   Serial.print(":");
+      // Serial.print(GpsUtc[2]);
+      // Serial.print(" ");
+      // GpsTimeMillis[X]  0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
+      GpsTimeMillis[1] = (GpsUtc[0]*3600000) + (GpsUtc[1]*60000) + (GpsUtc[2]*1000) ;
+      GpsTimeMillis[2] = GpsTimeMillis[1] - GpsTimeMillis[0];   // difference between UTC-PPS
 
-    GpsTimeMillis[1] = (GpsUtc[0]*3600000) + (GpsUtc[1]*60000) + (GpsUtc[2]*1000) ;
-    GpsTimeMillis[2] = GpsTimeMillis[1] - GpsTimeMillis[0];
-
-    // Serial.print(GpsTimeMillis[1]);
-    // Serial.print(" UTC ");
-    // Serial.print(GpsTimeMillis[2]);
-    // Serial.println(" diff");
-  }
-  Timeout[9][0] = millis();
-  if(ActualMenu==23 || ActualMenu==24 ){
-    LcdNeedRefresh=1;
+      // Serial.print(GpsTimeMillis[1]);
+      // Serial.print(" UTC ");
+      // Serial.print(GpsTimeMillis[2]);
+      // Serial.println(" diff");
+    }
+    Timeout[9][0] = millis();
+    if(ActualMenu==23 || ActualMenu==24 ){
+      LcdNeedRefresh=1;
+    }
+  }else{
+    Serial3.read(); // clear rx buffer
   }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -2801,8 +2814,9 @@ void IncomingUDP(){
   if(ETHERNET_MODULE==1){
     // detachInterrupt because this interrupt worked with ethernet also
     InterruptON(0,0,0); // keyb, enc, gps
-    //-------------------------------
-    // RTTY transmit incoming string
+
+    //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    // CW/RTTY transmit incoming string - port 89
     UDPpacketSize = UdpRtty.parsePacket();    // if there's data available, read a packet
     if (UDPpacketSize){
       if(ActualMode==3 || ActualMode==4){               // if mode FSK
@@ -2810,20 +2824,103 @@ void IncomingUDP(){
         FSKmemory[0] = packetBuffer;
         FSKmemoryTX(0);
       }
+      if(ActualMode==0 || ActualMode==1){               // if mode CW
+
+        //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        // CW send to SOxQ orchestra
+        // w:#######:[msg];
+        if(GpsTime==1 && (ReadGpsData[42]=='1' || ReadGpsData[42]=='2')){   // if enable SOxQ orchestra and gps quality byte ok
+          InterruptON(0,0,0); // keyb, enc, gps
+          UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
+          for (i = UDP_TX_PACKET_MAX_SIZE; i > -1 ; i--) { // move RX [msg] data (space for header)
+            if(packetBuffer[i]!=NULL){
+              packetBuffer[i+10] = packetBuffer[i];
+            }else{
+              tmp = i;  // used array count
+            }
+          }
+          packetBuffer[tmp+10] = B00111011;          // ;
+          packetBuffer[9] = B00111010;               // :
+
+          String HexTimeString = String((GpsTimeMillis[2]+millis()+120), HEX);  // Actually UTC time in millis + latency in HEX  <------- LATENCY
+          for (i = HexTimeString.length(); i < 7; i++) {            // Leading zero
+            HexTimeString = String("0") + HexTimeString;
+          }
+          HexTimeString.toCharArray(packetBuffer, 7);  // add time to array
+          packetBuffer[8] = packetBuffer[6];         // UTC
+          packetBuffer[7] = packetBuffer[5];         // UTC
+          packetBuffer[6] = packetBuffer[4];         // UTC
+          packetBuffer[5] = packetBuffer[3];         // UTC
+          packetBuffer[4] = packetBuffer[2];         // UTC
+          packetBuffer[3] = packetBuffer[1];         // UTC
+          packetBuffer[2] = packetBuffer[0];         // UTC
+          packetBuffer[1] = B00111010;               // :
+          packetBuffer[0] = B01110111;               // w
+
+          // QTH 1
+          UdpCommand.beginPacket(SO1QIP, SO1QPort);
+          UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
+          // RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
+          UdpCommand.endPacket();
+
+          // QTH 2
+          UdpCommand.beginPacket(SO2QIP, SO2QPort);
+          UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
+          // RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
+          UdpCommand.endPacket();
+
+          // RemoteSwLatencyAnsw = 0;   // send command, wait to answer
+          InterruptON(1,1,1); // keyb, enc, gps
+
+        //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        }else{  // CW transsmit localy
+          UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
+          ptt_high(PTTmodeCW);
+          tmp = sizeof(packetBuffer);
+          for (i = 0; i < tmp; i++) {
+            send_char(toUpperCase(packetBuffer[i]),KEYER_NORMAL);
+          }
+          ptt_low(PTTmodeCW);
+        }
+      }
       memset(packetBuffer, 0, sizeof(packetBuffer));   // if mode no FSK or after TX, clear Buffer
     }
-    //    delay(10);
-    //-------------------------------
-    // COMMANDS
+
+    //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    // COMMANDS - port 88
     UDPpacketSize = UdpCommand.parsePacket();    // if there's data available, read a packet
     if (UDPpacketSize){
       UdpCommand.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
 
+      //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+      // w:#######:[msg]; - CW transmit at UTC time
+      if ((ActualMode==0 || ActualMode==1) && packetBuffer[0] == 'w' && packetBuffer[1] == ':' && packetBuffer[9] == ':'){
+          // convert TX UTC from HEX to long decimal
+          TxUtcTimeMillis = hexToLong(String(packetBuffer[2]) + String(packetBuffer[3]) + String(packetBuffer[4]) + String(packetBuffer[5]) + String(packetBuffer[6]) + String(packetBuffer[7]) + String(packetBuffer[8]));
+          // calculate TX time in internal millis timer
+          TxTimeMillis = GpsTimeMillis[2]+millis();    // GpsTimeMillis[X] 0-PPS millis, 1-UTC millis, 2= 1-0
+
+          if(TxTimeMillis>millis()){
+            tmp = 0;
+            while(TxTimeMillis>millis()){
+              // waiting loop
+            }
+            ptt_high(PTTmodeCW);
+            while(packetBuffer[10+tmp] != ';' && tmp < 140){
+              send_char(toUpperCase(packetBuffer[10+tmp]),KEYER_NORMAL);
+              tmp++;
+            }
+            ptt_low(PTTmodeCW);
+          }else{
+            // it's late...
+          }
+      }
+
+      //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // Switch ANSWER > SET LED - Bank0-2
       if (packetBuffer[0] == 's' && packetBuffer[1] == ':'){
         RemoteSwLatency[1] = (millis()-RemoteSwLatency[0])/2; // set latency (half path in ms us/2/1000)
         RemoteSwLatencyAnsw = 1;           // answer packet received
-
 
         if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && HowRemoteSwitchID()<7){ // and ID < 7 (bank A/B)
           // Serial2.print("Remote IP switch ID: ");
@@ -2842,6 +2939,7 @@ void IncomingUDP(){
         }
       }
 
+      //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // Switch BROADCAST - STORAGE IP by received ID in 'DetectedRemoteSw' array (rows = Switch ID)
       if (packetBuffer[0] == 'b' && packetBuffer[1] == ':' && packetBuffer[2] == 's' && packetBuffer[4] == ';'){
         IPAddress TmpAddr = UdpCommand.remoteIP();
@@ -2882,6 +2980,7 @@ void IncomingUDP(){
         // }
       }
 
+      //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // INTERLOCK 1 direct
       if (packetBuffer[0] == 'i' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
         if(packetBuffer[2] == '1'){
@@ -2898,6 +2997,7 @@ void IncomingUDP(){
         LcdNeedRefresh = 1;
       }
 
+      //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // INTERLOCK 2 broadcast [b:o#*ps;]  #- open interface ID, *- band number s- PTT 0/1
       if (packetBuffer[0] == 'b' && packetBuffer[1] == ':' && packetBuffer[2] == 'o' && packetBuffer[5] == 'p' && packetBuffer[7] == ';'){
         if(packetBuffer[4] == BAND){    // if PTT on same band
@@ -2916,6 +3016,7 @@ void IncomingUDP(){
         }
       }
 
+      //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // PTT
       if (packetBuffer[0] == 'p' && packetBuffer[1] == ':' && packetBuffer[3] == ':' && packetBuffer[5] == ';'){
         if(packetBuffer[4] == '0'){tmp = PTTPA;}
@@ -2934,6 +3035,7 @@ void IncomingUDP(){
         }
       }
 
+      //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // MODE
       if (packetBuffer[0] == 'm' && packetBuffer[1] == ':' && packetBuffer[3] == ';'){
         tmp = packetBuffer[2]-'0';  // convert to int for compare
@@ -2943,6 +3045,7 @@ void IncomingUDP(){
         }
       }
 
+      //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // CONFIGURE c:001:value;
       if (packetBuffer[0] == 'c' && packetBuffer[1] == ':' && packetBuffer[5] == ':'){
 
@@ -3012,11 +3115,28 @@ void IncomingUDP(){
 }
 
 //-------------------------------------------------------------------------------------------------------
+// YOUR_CALL.toCharArray(MenuTree[0], 15);
+
 unsigned char hexToDecBy4bit(unsigned char hex)
 // convert a character representation of a hexidecimal digit into the actual hexidecimal value
 {
   if(hex > 0x39) hex -= 7; // adjust for hex letters upper or lower case
   return(hex & 0xf);
+}
+//-------------------------------------------------------------------------------------------------------
+
+long hexToLong(String hexString) {
+    long decValue = 0;
+    int nextInt;
+    for (int i = 0; i < hexString.length(); i++) {
+        nextInt = int(hexString.charAt(i));
+        if (nextInt >= 48 && nextInt <= 57) nextInt = map(nextInt, 48, 57, 0, 9);
+        if (nextInt >= 65 && nextInt <= 70) nextInt = map(nextInt, 65, 70, 10, 15);
+        if (nextInt >= 97 && nextInt <= 102) nextInt = map(nextInt, 97, 102, 10, 15);
+        nextInt = constrain(nextInt, 0, 15);
+        decValue = (decValue * 16) + nextInt;
+    }
+    return decValue;
 }
 //-------------------------------------------------------------------------------------------------------
 
@@ -3457,8 +3577,8 @@ void MenuToLCD(int nr){
     }
     case 23:{ // GpsTime
       lcd.setCursor(CulumnPosition-1, 1);
-      if(GpsTime=1){
-        if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){
+      if(GpsTime==1){
+        if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){      // gps quality byte
           if(GpsUtc[0]<10){
             lcd.print("0");
           }
@@ -3479,18 +3599,17 @@ void MenuToLCD(int nr){
           CulumnPosition=CulumnPosition+String(" GPS QRX ").length();
         }
       }else{
-        lcd.print(" n/a");
+        lcd.print(" GPS n/a");
         CulumnPosition=CulumnPosition+String(" n/a").length();
       }
-      // lcd.print(GpsTimeMillis[0], DEC);
     break;
     }
     case 24:{ // GpsTime difference
       lcd.setCursor(CulumnPosition-1, 1);
-      if(GpsTime=1){
-        if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){
-          lcd.print(GpsTimeMillis[2]);
-          CulumnPosition=CulumnPosition+String(GpsTimeMillis[2]).length();
+      if(GpsTime==1){
+        if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){      // gps quality byte
+          lcd.print(String(GpsTimeMillis[2], HEX));   // long to hex
+          CulumnPosition=CulumnPosition+String(GpsTimeMillis[2], HEX).length();
         }else{
           lcd.print(" GPS QRX ");
           CulumnPosition=CulumnPosition+String(" GPS QRX ").length();
@@ -3499,7 +3618,12 @@ void MenuToLCD(int nr){
         lcd.print("GPS n/a");
         CulumnPosition=CulumnPosition+String("GPS n/a").length();
       }
-      // lcd.print(GpsTimeMillis[0], DEC);
+    break;
+    }
+    case 25:{ // tmp
+      lcd.setCursor(CulumnPosition-1, 1);
+          lcd.print(TxUtcTimeMillis);
+          CulumnPosition=CulumnPosition+String().length();
     break;
     }
 
@@ -3607,14 +3731,14 @@ void SwitchHardware(int SwitchHardwareMode){
         break;
     }
     case 4:{ // FSK ASCII
-        Serial.begin(SERBAUD0);
+        // Serial.begin(SERBAUD0);
         digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
         digitalWrite (AFSK, LOW);
         Serial.flush();  // clear buffer before switch to serial2FSK
         break;
     }
     case 5:{ // DIGITAL (AFSK)
-        Serial.begin(PRIMARY_SERIAL_PORT_BAUD);
+        // Serial.begin(PRIMARY_SERIAL_PORT_BAUD);
         digitalWrite (WINKEY, LOW);
         digitalWrite (AFSK, HIGH);
         break;
