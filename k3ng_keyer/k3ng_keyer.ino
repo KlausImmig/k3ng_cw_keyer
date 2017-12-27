@@ -1305,9 +1305,9 @@ boolean RemoteSwitch    = 1;          // IP controled remote RemoteSwitch https:
 boolean KeyboardAnswLed = 1;          // Keyboard Led shown answered UDP packet from IP RemoteSwitch
                                       // + latency measure. Disable set localy
 boolean GpsTime         = 1;          // External GPS via ACC [FGPMMOPA6H chip] https://remoteqth.com/outdoor-gps-module.php
-                                      // also enabled SOxQ proxy (Single Operator [x] QTH) orchestra
+                                      // also enabled SOMQ proxy (Single Operator Multi QTH) orchestra
                                       // If GPS synchronous time, received ascii on 89 UDP port formated with UTC time and send to some QTHs on command port 88
-                                      // IP set manually in 'SOxQorchestraIP' array
+                                      // IP set manually below SOxQTH variable
 
 // FEATURES AND OPTIONS
 boolean K3NG_KEYER      = 1;          // enable CW keyer
@@ -1531,11 +1531,15 @@ byte GpsBufferPos  = 0;
 long TxUtcTimeMillis;
 long TxTimeMillis;
 
-// SOxQ orchestra - need GPS
-IPAddress SO1QIP(192, 168, 1, 200);               // remote QTH IP - set from SOxQorchestraIP array
-int SO1QPort = 88;                           // remote QTH port
-IPAddress SO2QIP(192, 168, 1, 42);               // remote QTH IP - set from SOxQorchestraIP array
-int SO2QPort = 88;                           // remote QTH port
+// SOMQ orchestra - need GPS
+const int SOxQTH = 2;                        // Number of QTH - need manually insert SOxQIP, SOxQPort variables and expand TX QTH in IncomingUDP() subroutine
+long B4TxTimer;
+int TxQthIpLatency = 100;                    // ms 120?
+long SO1QLatency[SOxQTH];
+IPAddress SO1QIP(192, 168, 1, 47);           // 1-47 2-19 remote QTH 1 IP
+int SO1QPort = 88;                           // remote QTH 1 port
+IPAddress SO2QIP(192, 168, 1, 42);           // remote QTH 2 IP
+int SO2QPort = 88;                           // remote QTH 2 port
 
 // Serial2FSK (FSK TX)
 int SERBAUD0                  = 1200;       // Serial0 in/out baudrate (seria2fsk), if set 1200 may be controled as winkey
@@ -1742,7 +1746,7 @@ char* MenuTree[26]= { // [radky][sloupce]
   "NetID ",          // 22  Unique network ID
   "utc",             // 23  GPS time
   "D ",              // 23  difference between UTC in millis and internal millis timer
-  "",                // 24  SOxQ orchestra status
+  "B4TX ",           // 24  Before transmit delay (if slave in SOMQ orchestra - incoming 'w' UDP command)
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -2808,6 +2812,23 @@ int HowRemoteSwitchID(){
     }
   }
 }
+
+//-------------------------------------------------------------------------------------------------------
+void TxCwAtUTC(){
+  B4TxTimer=millis();         // mark timer
+  tmp = 0;
+  while(TxTimeMillis>millis()){
+    // waiting loop
+  }
+  B4TxTimer=millis()-B4TxTimer;
+  ptt_high(PTTmodeCW);
+  while(packetBuffer[10+tmp] != ';' && tmp < UDP_TX_PACKET_MAX_SIZE){
+    send_char(toUpperCase(packetBuffer[10+tmp]),KEYER_NORMAL);
+    tmp++;
+  }
+  ptt_low(PTTmodeCW);
+}
+
 //-------------------------------------------------------------------------------------------------------
 // Incoming UDP commands
 void IncomingUDP(){
@@ -2816,7 +2837,7 @@ void IncomingUDP(){
     InterruptON(0,0,0); // keyb, enc, gps
 
     //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    // CW/RTTY transmit incoming string - port 89
+    // CW/RTTY transmit incoming string [port 89]
     UDPpacketSize = UdpRtty.parsePacket();    // if there's data available, read a packet
     if (UDPpacketSize){
       if(ActualMode==3 || ActualMode==4){               // if mode FSK
@@ -2827,9 +2848,9 @@ void IncomingUDP(){
       if(ActualMode==0 || ActualMode==1){               // if mode CW
 
         //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        // CW send to SOxQ orchestra
+        // CW send to SOMQ orchestra
         // w:#######:[msg];
-        if(GpsTime==1 && (ReadGpsData[42]=='1' || ReadGpsData[42]=='2')){   // if enable SOxQ orchestra and gps quality byte ok
+        if(GpsTime==1 && (ReadGpsData[42]=='1' || ReadGpsData[42]=='2')){   // if enable SOMQ orchestra and gps quality byte ok
           InterruptON(0,0,0); // keyb, enc, gps
           UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
           for (i = UDP_TX_PACKET_MAX_SIZE; i > -1 ; i--) { // move RX [msg] data (space for header)
@@ -2842,11 +2863,11 @@ void IncomingUDP(){
           packetBuffer[tmp+10] = B00111011;          // ;
           packetBuffer[9] = B00111010;               // :
 
-          String HexTimeString = String((GpsTimeMillis[2]+millis()+120), HEX);  // Actually UTC time in millis + latency in HEX  <------- LATENCY
+          String HexTimeString = String((GpsTimeMillis[2]+millis()+TxQthIpLatency), HEX);  // Actually UTC time in millis + latency in HEX  <------- LATENCY
           for (i = HexTimeString.length(); i < 7; i++) {            // Leading zero
             HexTimeString = String("0") + HexTimeString;
           }
-          HexTimeString.toCharArray(packetBuffer, 7);  // add time to array
+          HexTimeString.toCharArray(packetBuffer, 8);  // add time to array
           packetBuffer[8] = packetBuffer[6];         // UTC
           packetBuffer[7] = packetBuffer[5];         // UTC
           packetBuffer[6] = packetBuffer[4];         // UTC
@@ -2856,21 +2877,37 @@ void IncomingUDP(){
           packetBuffer[2] = packetBuffer[0];         // UTC
           packetBuffer[1] = B00111010;               // :
           packetBuffer[0] = B01110111;               // w
+          // Serial.println(HexTimeString);
+          // Serial.print(packetBuffer[1]);
+          // Serial.print(packetBuffer[2]);
+          // Serial.print(packetBuffer[3]);
+          // Serial.print(packetBuffer[4]);
+          // Serial.print(packetBuffer[5]);
+          // Serial.print(packetBuffer[6]);
+          // Serial.print(packetBuffer[7]);
+          // Serial.print(packetBuffer[8]);
+          // Serial.println(packetBuffer[9]);
 
-          // QTH 1
+          // TX to QTH 1
           UdpCommand.beginPacket(SO1QIP, SO1QPort);
           UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
-          // RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
+          SO1QLatency[0] = millis(); // set START time mark UDP command latency
           UdpCommand.endPacket();
 
-          // QTH 2
+          // TX to QTH 2
           UdpCommand.beginPacket(SO2QIP, SO2QPort);
           UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
-          // RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
+          SO1QLatency[1] = millis(); // set START time mark UDP command latency
           UdpCommand.endPacket();
 
           // RemoteSwLatencyAnsw = 0;   // send command, wait to answer
           InterruptON(1,1,1); // keyb, enc, gps
+
+          // and TX localy at UTC time -   0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
+          TxTimeMillis = (GpsTimeMillis[2]+millis()+TxQthIpLatency)-GpsTimeMillis[2] ;
+          if(TxTimeMillis>millis()){
+            TxCwAtUTC();
+          }
 
         //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         }else{  // CW transsmit localy
@@ -2887,7 +2924,7 @@ void IncomingUDP(){
     }
 
     //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    // COMMANDS - port 88
+    // COMMANDS [port 88]
     UDPpacketSize = UdpCommand.parsePacket();    // if there's data available, read a packet
     if (UDPpacketSize){
       UdpCommand.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
@@ -2898,21 +2935,19 @@ void IncomingUDP(){
           // convert TX UTC from HEX to long decimal
           TxUtcTimeMillis = hexToLong(String(packetBuffer[2]) + String(packetBuffer[3]) + String(packetBuffer[4]) + String(packetBuffer[5]) + String(packetBuffer[6]) + String(packetBuffer[7]) + String(packetBuffer[8]));
           // calculate TX time in internal millis timer
-          TxTimeMillis = GpsTimeMillis[2]+millis();    // GpsTimeMillis[X] 0-PPS millis, 1-UTC millis, 2= 1-0
+          TxTimeMillis = TxUtcTimeMillis-GpsTimeMillis[2];  // GpsTimeMillis[X] - 0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
+
+          // Serial.println(String(packetBuffer[2]) + String(packetBuffer[3]) + String(packetBuffer[4]) + String(packetBuffer[5]) + String(packetBuffer[6]) + String(packetBuffer[7]) + String(packetBuffer[8]));
+          // Serial.println(TxUtcTimeMillis);
+          // Serial.println(TxTimeMillis);
 
           if(TxTimeMillis>millis()){
-            tmp = 0;
-            while(TxTimeMillis>millis()){
-              // waiting loop
-            }
-            ptt_high(PTTmodeCW);
-            while(packetBuffer[10+tmp] != ';' && tmp < 140){
-              send_char(toUpperCase(packetBuffer[10+tmp]),KEYER_NORMAL);
-              tmp++;
-            }
-            ptt_low(PTTmodeCW);
+            // Serial.println("TX");
+            // Serial.println(TxTimeMillis-millis());
+            TxCwAtUTC();
           }else{
-            // it's late...
+            // Arrived late
+            B4TxTimer=-1;
           }
       }
 
@@ -3608,7 +3643,8 @@ void MenuToLCD(int nr){
       lcd.setCursor(CulumnPosition-1, 1);
       if(GpsTime==1){
         if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){      // gps quality byte
-          lcd.print(String(GpsTimeMillis[2], HEX));   // long to hex
+          // lcd.print(String(GpsTimeMillis[2], HEX));   // long to hex
+          lcd.print((GpsTimeMillis[2]+millis()+10000), HEX);   // utc time + 10s
           CulumnPosition=CulumnPosition+String(GpsTimeMillis[2], HEX).length();
         }else{
           lcd.print(" GPS QRX ");
@@ -3620,10 +3656,20 @@ void MenuToLCD(int nr){
       }
     break;
     }
-    case 25:{ // tmp
+    case 25:{ // SOMQ B4TX Timer
       lcd.setCursor(CulumnPosition-1, 1);
-          lcd.print(TxUtcTimeMillis);
-          CulumnPosition=CulumnPosition+String().length();
+      if(GpsTime==1){
+        if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){      // gps quality byte
+          lcd.print(B4TxTimer);
+          CulumnPosition=CulumnPosition+String(B4TxTimer).length();
+        }else{
+          lcd.print(" QRX  ");
+          CulumnPosition=CulumnPosition+String(" QRX  ").length();
+        }
+      }else{
+        lcd.print(" n/a  ");
+        CulumnPosition=CulumnPosition+String(" n/a  ").length();
+      }
     break;
     }
 
