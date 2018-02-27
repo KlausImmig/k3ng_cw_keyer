@@ -1314,7 +1314,7 @@ boolean K3NG_KEYER      = 1;          // enable CW keyer
 boolean FSK_TX          = 1;          // enable RTTY keying
 boolean FSK_RX          = 1;          // enable RTTY decoder - EXPERIMENTAL!
 //=============================
-byte UNIQUE_ID          = 0x02;       // [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
+byte UNIQUE_ID          = 0x04;       // [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
 //=============================
 boolean MQTT_ENABLE     = 0;          // enable public to MQTT broker
 int MQTT_PORT           = 1883;       // MQTT broker PORT
@@ -1352,9 +1352,9 @@ int UDP_COMMAND_PORT    = 88;         /* UDP port listen to RX command
                                                         [msg] transmit message
 */
 
-String YOUR_CALL        = "Your Call";
+String YOUR_CALL        = "OK1HRA";
 int MODE_AFTER_POWER_UP = 0;          // MODE after start up
-int MENU_AFTER_POWER_UP = 23;          // MENU after start up
+int MENU_AFTER_POWER_UP = 23;         // MENU after start up
 boolean BUTTON_BEEP     = 1;          // Mode button beep enable
 
 int SEQUENCERlead       = 0;          // SEQUENCER output lead delay ms between SEQ-->PA
@@ -1643,6 +1643,9 @@ byte SequencerLevel = 0;   // 0 = off, 1-2-3 = PTT1-2-3, 4 = PA, 5 = SEQ
   // const int MISO = 50;
   // const int MOSI = 51;
   // const int SCK  = 52;
+  const int SMTpad1 = 48;   // ^ Internal SMT pad
+  const int SMTpad2 = 49;   // -
+  const int SMTpad3 = A0;   // v
 #endif
 
 #if defined(PCB_REV_3_141)
@@ -1720,8 +1723,8 @@ char* modeLCD[6][2]= {
     {"|DIG", "Data  AFSK"},
 };
 
-char* MenuTree[26]= { // [radky][sloupce]
-  "Your Call",         //  0 call
+char* MenuTree[26]= {
+  "          ",      //  0 call
   "PCB 3.1415",      //  1
   "DCin",            //  2
   "3V3",             //  3
@@ -1941,6 +1944,12 @@ void setup()
   pinMode(WINKEY, OUTPUT);
     digitalWrite (WINKEY, HIGH);
   pinMode(TONE, OUTPUT);
+  pinMode(SMTpad1, INPUT);
+    digitalWrite (SMTpad1, HIGH);
+  pinMode(SMTpad2, INPUT);
+    digitalWrite (SMTpad2, HIGH);
+  pinMode(SMTpad3, INPUT);
+    digitalWrite (SMTpad3, HIGH);
   // FSK TX
   digitalWrite(FSK, LOW);
   lcd.createChar(0, CRi);
@@ -2064,6 +2073,7 @@ void setup()
 
   //ETHERNET - MQTT - UDP
   if (ETHERNET_MODULE==1){
+    IdBySmtPad();
     if (USE_DHCP == 1){  // initialize the ethernet device
       Ethernet.begin(mac);
     }else{
@@ -2108,7 +2118,7 @@ void setup()
   InterruptON(1,1,1); // keyb, enc, gps
 
   Serial.begin(9600);
-
+  YOUR_CALL.toCharArray(MenuTree[0], 10);
 
 } // SETUP END
 
@@ -2138,6 +2148,20 @@ void loop() {
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
 // http://www.catonmat.net/blog/low-level-bit-hacks-you-absolutely-must-know/
+
+void IdBySmtPad(){
+  UNIQUE_ID = 0;
+  if(digitalRead(SMTpad1)==0){
+    UNIQUE_ID = UNIQUE_ID | (1<<0);    // Set the n-th bit
+  }
+  if(digitalRead(SMTpad2)==0){
+    UNIQUE_ID = UNIQUE_ID | (1<<1);    // Set the n-th bit
+  }
+  if(digitalRead(SMTpad3)==0){
+    UNIQUE_ID = UNIQUE_ID | (1<<2);    // Set the n-th bit
+  }
+
+}
 
 void GpsPpsInterrupt(){    // run from interrupt
   /* NMEA checksum http://www.hhhh.org/wiml/proj/nmeaxor.html
@@ -2574,7 +2598,7 @@ void readSDSettings(){
     ActualMode = MODE_AFTER_POWER_UP;     //  Mode
     ActualMenu = MENU_AFTER_POWER_UP;     //  Menu
     PreviousMenu = MENU_AFTER_POWER_UP;     //  previous Menu
-    YOUR_CALL.toCharArray(MenuTree[0], 15);
+    YOUR_CALL.toCharArray(MenuTree[0], 10);
   }
 //-------------------------------------------------------------------------------------------------------
 void printDirectory(File dir, int numTabs) {
@@ -3150,7 +3174,6 @@ void IncomingUDP(){
 }
 
 //-------------------------------------------------------------------------------------------------------
-// YOUR_CALL.toCharArray(MenuTree[0], 15);
 
 unsigned char hexToDecBy4bit(unsigned char hex)
 // convert a character representation of a hexidecimal digit into the actual hexidecimal value
@@ -4427,6 +4450,7 @@ void BandDecoder() {
                 }
                 if(rdI[4]==0x04 && rdI[7]==0xFD){    // Mode - 04 command and state machine end
                   ActualMode=CIVModeSet[rdI[5]];        // set mode by CIVModeSet table
+                  SwitchHardware(ActualMode);
                 }
                 InterruptON(1,1,1); // keyb, enc, gps
             }
