@@ -1310,18 +1310,20 @@ boolean GpsTime         = 1;          // External GPS via ACC [FGPMMOPA6H chip] 
                                       // IP set manually below SOxQTH variable
 
 // FEATURES AND OPTIONS
+int DebuggingOutput     = 0;          // 0 = OFF, 1 - Serial0 KEY, 2 - Serial2 CAT, 3 - UDP
 boolean K3NG_KEYER      = 1;          // enable CW keyer
 boolean FSK_TX          = 1;          // enable RTTY keying
 boolean FSK_RX          = 1;          // enable RTTY decoder - EXPERIMENTAL!
 //=============================
-byte UNIQUE_ID          = 0x04;       // [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
+byte NET_ID          = 0x04;          // NetID [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
 //=============================
 boolean MQTT_ENABLE     = 0;          // enable public to MQTT broker
 int MQTT_PORT           = 1883;       // MQTT broker PORT
 boolean MQTT_LOGIN      = 1;          // enable MQTT broker login
 char MQTT_USER          = 'login';    // MQTT broker user login
 char MQTT_PASS          = 'passwd';   // MQTT broker password
-int UDP_RTTY_PORT       = 89;         // UDP port listen to RTTY character (FSK mode)
+int UDP_RTTY_PORT       = 89;         // UDP port listen to CW/RTTY character (also proxy for SOMQ orchestra)
+                                      // [echo -n "cq de ok1hra ok1hra test k;" | nc -u -w1 192.168.1.19 89]
 int UDP_COMMAND_PORT    = 88;         /* UDP port listen to RX command
 
                                       m:#;   - Mode # 0-5
@@ -1339,6 +1341,10 @@ int UDP_COMMAND_PORT    = 88;         /* UDP port listen to RX command
                                                          [echo -n "c:002:56;" | nc -u -w1 192.168.1.20 88]
                                                    - 003-BAND_DECODER_IN #
                                                          0=disable 1=ICOM_CIV 2=KENWOOD_PC 3=YAESU_CAT 4=YAESU_CAT_OLD 5=INPUT_SERIAL
+                                                   - 004-DebuggingOutput
+                                                         0=disable 1=serial1(KEY) 2=serial2(CAT) 3=UDP broadcast
+                                                         [echo -n "c:004:3;" | nc -u -w1 192.168.1.6 88] set
+                                                         [tcpdump -A -i enp0s31f6 ether broadcast and udp port 88 | grep 'debug:' | cut -d ':' -f2 | cut -d ';' -f1] listen
 
                                       b:s#;  - Broadcast identify packet
                                              - s = Switch board, # = ID
@@ -1483,7 +1489,7 @@ char* ANTname[12] = {
   #include <Ethernet2.h> // and disable on line #749
   #include <EthernetUdp2.h>
   #include <PubSubClient.h>
-  byte LastMac = 0xFF - UNIQUE_ID;
+  byte LastMac = 0xFF - NET_ID;
   byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, LastMac};
   boolean USE_DHCP = 1;                    // Uncoment to Enable DHCP
   IPAddress ip(192, 168, 1, 220);         // IP
@@ -1513,6 +1519,8 @@ char* ANTname[12] = {
   long RemoteSwLatency[2];                  // start, stop mark
   byte RemoteSwLatencyAnsw = 1;             // answer (offline) detect
   byte TxUdpBuffer[10];
+  IPAddress DebuggingIP(0, 0, 0, 0);        // Debugging broadcast IP address
+  int DebuggingPort       = 66;             // destination broadcast packet port
 // }
 
 // microSD
@@ -1523,7 +1531,9 @@ char charConfigFile[8]; // length +1
 
 // GpsTime
 int SERBAUD3                  = 9600;       // Serial3 in/out baudrate in ACC connector [FGPMMOPA6H chip]
-long GpsTimeMillis[3];                      // 0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
+long GpsTimeMillis;                         // PPS millis
+long GpsTimeMillisUTC;                      // UTC millis calculate from NMEA
+long GpsTimeMillisDiff;                     // Synchronous difference 1-0
 char ReadGpsData[70];
 String ReadGpsDataString;
 long GpsUtc[3];
@@ -1532,14 +1542,17 @@ long TxUtcTimeMillis;
 long TxTimeMillis;
 
 // SOMQ orchestra - need GPS
-const int SOxQTH = 2;                        // Number of QTH - need manually insert SOxQIP, SOxQPort variables and expand TX QTH in IncomingUDP() subroutine
+const int SOxQTH = 3;                        // Number of QTH - need manually insert SOxQIP, SOxQPort variables and expand TX QTH in IncomingUDP() subroutine
 long B4TxTimer;
 int TxQthIpLatency = 100;                    // ms 120?
 long SO1QLatency[SOxQTH];
-IPAddress SO1QIP(192, 168, 1, 47);           // 1-47 2-19 remote QTH 1 IP
-int SO1QPort = 88;                           // remote QTH 1 port
-IPAddress SO2QIP(192, 168, 1, 42);           // remote QTH 2 IP
-int SO2QPort = 88;                           // remote QTH 2 port
+// Static IP may be rewrite if receive broadcast packet (b:o#;) from another OI
+IPAddress SO1QIP(192, 168, 1, 47);           // remote QTH NetID 1 IP
+int SO1QPort = 88;                           // remote QTH NetID 1 port
+IPAddress SO2QIP(192, 168, 1, 42);           // remote QTH NetID 2 IP
+int SO2QPort = 88;                           // remote QTH NetID 2 port
+IPAddress SO3QIP(192, 168, 1, 40);           // remote QTH NetID 3 IP
+int SO3QPort = 88;                           // remote QTH NetID 3 port
 
 // Serial2FSK (FSK TX)
 int SERBAUD0                  = 1200;       // Serial0 in/out baudrate (seria2fsk), if set 1200 may be controled as winkey
@@ -1553,12 +1566,12 @@ int SPACE                     = 1275;       // [Hz] AFSK space 1275 / 2125 Hz
 #define BaudRate 45.45           // RTTY baud rate
 #define StopBit  1.5             // stop bit long
 String FSKmemory[6]= {
-  "",                            // reserve for incoming UDP string
-  " cq de call call k",          // Memory 0 button
-  " call ",                      // Memory 1 button
-  " 599 15 ",                    // Memory 2 button
-  " CQ call call ",              // Memory CW Left paddle
-  " call "                       // Memory CW Right paddle
+  "",                                       // reserve for incoming UDP string
+  " cq de "+YOUR_CALL+" "+YOUR_CALL+" k ",  // Memory 0 button
+  " "+YOUR_CALL+" ",                        // Memory 1 button
+  " 599 15 ",                               // Memory 2 button
+  " CQ "+YOUR_CALL+" "+YOUR_CALL+" ",       // Memory CW Left paddle
+  " "+YOUR_CALL+" "                         // Memory CW Right paddle
 };
 
 // TIMEOUTS
@@ -1723,7 +1736,7 @@ char* modeLCD[6][2]= {
     {"|DIG", "Data  AFSK"},
 };
 
-char* MenuTree[26]= {
+char* MenuTree[27]= {
   "          ",      //  0 call
   "PCB 3.1415",      //  1
   "DCin",            //  2
@@ -1748,8 +1761,9 @@ char* MenuTree[26]= {
   "Latency ",        // 21  Last Switch changed latency [ms]
   "NetID ",          // 22  Unique network ID
   "utc",             // 23  GPS time
-  "D ",              // 23  difference between UTC in millis and internal millis timer
-  "B4TX ",           // 24  Before transmit delay (if slave in SOMQ orchestra - incoming 'w' UDP command)
+  "D ",              // 24  difference between UTC in millis and internal millis timer
+  "B4TX ",           // 25  Before transmit delay (if slave in SOMQ orchestra - incoming 'w' UDP command)
+  "Debug ",          // 26  Debug values on Serial2
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -1963,11 +1977,13 @@ void setup()
   if (BAND_DECODER_IN > 0 && BAND_DECODER_IN < 4){  // YAESU_CAT_OLD
       Serial2.begin(SERBAUD2);
       Serial2.setTimeout(10);
-    }
-  if (BAND_DECODER_IN == 4){  // YAESU_CAT_OLD
+  }else if (BAND_DECODER_IN == 4){  // YAESU_CAT_OLD
       Serial2.begin(SERBAUD2, SERIAL_8N2);
       Serial2.setTimeout(10);
+  }else{
+    Serial2.begin(SERBAUD2);
   }
+
   // #if defined(KENWOOD_PC) || defined(YAESU_CAT)
       //CATdata.reserve(200);          // reserve bytes for the CATdata
   // #endif
@@ -2074,6 +2090,9 @@ void setup()
   //ETHERNET - MQTT - UDP
   if (ETHERNET_MODULE==1){
     IdBySmtPad();
+    LastMac = 0xFF - NET_ID;
+    mac[5] = LastMac;
+
     if (USE_DHCP == 1){  // initialize the ethernet device
       Ethernet.begin(mac);
     }else{
@@ -2090,6 +2109,7 @@ void setup()
     lcd.setCursor(1, 0);
     lcd.print(F("IP address:"));
     delay(500);
+    lcd.clear();
     lcd.setCursor(1, 0);
     lcd.print(Ethernet.localIP());
     delay(2500);
@@ -2150,15 +2170,15 @@ void loop() {
 // http://www.catonmat.net/blog/low-level-bit-hacks-you-absolutely-must-know/
 
 void IdBySmtPad(){
-  UNIQUE_ID = 0;
+  NET_ID = 0;
   if(digitalRead(SMTpad1)==0){
-    UNIQUE_ID = UNIQUE_ID | (1<<0);    // Set the n-th bit
+    NET_ID = NET_ID | (1<<0);    // Set the n-th bit
   }
   if(digitalRead(SMTpad2)==0){
-    UNIQUE_ID = UNIQUE_ID | (1<<1);    // Set the n-th bit
+    NET_ID = NET_ID | (1<<1);    // Set the n-th bit
   }
   if(digitalRead(SMTpad3)==0){
-    UNIQUE_ID = UNIQUE_ID | (1<<2);    // Set the n-th bit
+    NET_ID = NET_ID | (1<<2);    // Set the n-th bit
   }
 
 }
@@ -2191,7 +2211,7 @@ void GpsPpsInterrupt(){    // run from interrupt
 
     // if quality byte 1 or 2, and begin GPGGA string
     if( (ReadGpsData[42]=='1' || ReadGpsData[42]=='2') && ReadGpsData[0]==71 && ReadGpsData[1]==80 && ReadGpsData[2]==71 && ReadGpsData[3]==71 && ReadGpsData[4]==65 && ReadGpsData[5]==44){
-      GpsTimeMillis[0] = millis() ;   // 0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
+      GpsTimeMillis = millis() ;   // 0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
 
       ReadGpsDataString = "";
       ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[6]) + String(ReadGpsData[7]); // append variable to string
@@ -2205,20 +2225,30 @@ void GpsPpsInterrupt(){    // run from interrupt
       ReadGpsDataString = ReadGpsDataString + String(ReadGpsData[10]) + String(ReadGpsData[11]); // append variable to string
       GpsUtc[2]=ReadGpsDataString.toInt();  // SS
 
-      // Serial.print(GpsUtc[0]);
-      //   Serial.print(":");
-      // Serial.print(GpsUtc[1]);
-      //   Serial.print(":");
-      // Serial.print(GpsUtc[2]);
-      // Serial.print(" ");
       // GpsTimeMillis[X]  0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
-      GpsTimeMillis[1] = (GpsUtc[0]*3600000) + (GpsUtc[1]*60000) + (GpsUtc[2]*1000) ;
-      GpsTimeMillis[2] = GpsTimeMillis[1] - GpsTimeMillis[0];   // difference between UTC-PPS
+      GpsTimeMillisUTC = (GpsUtc[0]*3600000) + (GpsUtc[1]*60000) + (GpsUtc[2]*1000) ;
+      GpsTimeMillisDiff = GpsTimeMillisUTC - GpsTimeMillis;   // difference between UTC-PPS
 
-      // Serial.print(GpsTimeMillis[1]);
-      // Serial.print(" UTC ");
-      // Serial.print(GpsTimeMillis[2]);
-      // Serial.println(" diff");
+      if(DebuggingOutput!=0){
+        Debugging(String((char*)ReadGpsData));
+        Debugging(" UTC|diff|millis: ");
+        Debugging(String(GpsUtc[0]));
+        Debugging(":");
+        Debugging(String(GpsUtc[1]));
+        Debugging(":");
+        Debugging(String(GpsUtc[2]));
+        Debugging(" ");
+        Debugging(String(GpsTimeMillisUTC));
+        Debugging(",");
+        Debugging(String(GpsTimeMillisUTC, HEX));
+        Debugging("|");
+        Debugging(String(GpsTimeMillisDiff));
+        Debugging(",");
+        Debugging(String(GpsTimeMillisDiff, HEX));
+        Debugging("|");
+        Debugging(String(millis()));
+        Debuggingln();
+      }
     }
     Timeout[9][0] = millis();
     if(ActualMenu==23 || ActualMenu==24 ){
@@ -2266,30 +2296,31 @@ void AccKeyboardShift(){    // run from interrupt
         }
         digitalWrite(ShiftInClockPin, 1);
     }
+    if(DebuggingOutput!=0){
+      Debugging("BAND: ");
+      Debugging(String(BAND));
+      Debuggingln();
 
-    // Serial2.println();
-    // Serial2.print("BAND: ");
-    // Serial2.println(BAND);
+      for (i = 0; i < 10; i++) {
+        Debugging(String(i));
+        Debugging(String(DetectedRemoteSw [i] [0]));
+        Debugging(".");
+        Debugging(String(DetectedRemoteSw [i] [1]));
+        Debugging(".");
+        Debugging(String(DetectedRemoteSw [i] [2]));
+        Debugging(".");
+        Debugging(String(DetectedRemoteSw [i] [3]));
+        Debugging(":");
+        Debugging(String(DetectedRemoteSw [i] [4]));
+        Debuggingln();
+      }
 
-    // for (i = 0; i < 10; i++) {
-    //   Serial2.print(i);
-    //   Serial2.print("  ");
-    //   Serial2.print(DetectedRemoteSw [i] [0]);
-    //   Serial2.print(".");
-    //   Serial2.print(DetectedRemoteSw [i] [1]);
-    //   Serial2.print(".");
-    //   Serial2.print(DetectedRemoteSw [i] [2]);
-    //   Serial2.print(".");
-    //   Serial2.print(DetectedRemoteSw [i] [3]);
-    //   Serial2.print(":");
-    //   Serial2.println(DetectedRemoteSw [i] [4]);
-    // }
-
-    // Serial2.print("  ");
-    // Serial2.print(RemoteSwIP);
-    // Serial2.print(":");
-    // Serial2.print(RemoteSwPort);
-    // Serial2.print("  ->  ");
+      Debugging("  ");
+      Debugging(String(RemoteSwIP));
+      Debugging(":");
+      Debugging(String(RemoteSwPort));
+      Debugging("  ->  ");
+    }
 
     // SET IP:PORT from array by relay ID (id = rows)
     // RemoteSwIP = DetectedRemoteSw[packetBuffer[3]];
@@ -2297,9 +2328,12 @@ void AccKeyboardShift(){    // run from interrupt
     RemoteSwIP = DetectedRemoteSw[BandToRemoteSwitchID[BAND]];
     RemoteSwPort = DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4];
 
-    // Serial2.print(RemoteSwIP);
-    // Serial2.print(":");
-    // Serial2.println(RemoteSwPort);
+    if(DebuggingOutput!=0){
+      Debugging(String(RemoteSwIP));
+      Debugging(":");
+      Debugging(String(RemoteSwPort));
+      Debuggingln();
+    }
 
     // UDP send to Switch
     if(ETHERNET_MODULE == 1 && RemoteSwitch == 1){
@@ -2462,8 +2496,8 @@ void readSDSettings(){
         FSK_TX = (boolean)settingValue.toInt();
       }else if(settingName == "FSK_RX"){
         FSK_RX = (boolean)settingValue.toInt();
-      }else if(settingName == "UNIQUE_ID"){
-        // UNIQUE_ID = settingValue;
+      }else if(settingName == "NET_ID"){
+        // NET_ID = settingValue;
       }else if(settingName == "MQTT_PORT"){
         MQTT_PORT = settingValue.toInt();
       }else if(settingName == "MQTT_LOGIN"){
@@ -2631,36 +2665,36 @@ void AfterMQTTconnect(){
         IPAddress IPlocalAddr = Ethernet.localIP();                           // get
         String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
         IPlocalAddrString.toCharArray( mqttTX, 50 );                          // to array
-        String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/ip";
+        String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/ip";
         path2.toCharArray( mqttPath, 20 );
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/pttlead";
+        path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/pttlead";
         path2.toCharArray( mqttPath, 20 );
         String(PTTlead).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/ptttail";
+        path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/ptttail";
         path2.toCharArray( mqttPath, 20 );
         String(PTTtail).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/seqlead";
+        path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/seqlead";
         path2.toCharArray( mqttPath, 20 );
         String(SEQUENCERlead).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/seqtail";
+        path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/seqtail";
         path2.toCharArray( mqttPath, 20 );
         String(SEQUENCERtail).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/palead";
+        path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/palead";
         path2.toCharArray( mqttPath, 20 );
         String(PAlead).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
 
-        path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/patail";
+        path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/patail";
         path2.toCharArray( mqttPath, 20 );
         String(PAtail).toCharArray( mqttTX, 50 );                          // to array
           client.publish(mqttPath, mqttTX, true);
@@ -2851,6 +2885,16 @@ void TxCwAtUTC(){
     tmp++;
   }
   ptt_low(PTTmodeCW);
+  if(DebuggingOutput!=0){
+    Debugging(String(packetBuffer));
+    Debuggingln();
+    Debugging("TxTimeMillis ");
+    Debugging(String(TxTimeMillis, HEX));
+    Debuggingln();
+    Debugging("B4TxTimer ");
+    Debugging(String(B4TxTimer));
+    Debuggingln();
+  }
 }
 
 //-------------------------------------------------------------------------------------------------------
@@ -2861,9 +2905,17 @@ void IncomingUDP(){
     InterruptON(0,0,0); // keyb, enc, gps
 
     //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
     // CW/RTTY transmit incoming string [port 89]
+
+    //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     UDPpacketSize = UdpRtty.parsePacket();    // if there's data available, read a packet
     if (UDPpacketSize){
+      if(DebuggingOutput!=0){
+        Debuggingln();
+        Debugging("Incoming UDP CW/RTTY string on port 89");
+        Debuggingln();
+      }
       if(ActualMode==3 || ActualMode==4){               // if mode FSK
         UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
         FSKmemory[0] = packetBuffer;
@@ -2872,8 +2924,8 @@ void IncomingUDP(){
       if(ActualMode==0 || ActualMode==1){               // if mode CW
 
         //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        // CW send to SOMQ orchestra
-        // w:#######:[msg];
+        // CW send to SOMQ orchestra (proxy)
+        // RX string -> TX w:#######:[msg];
         if(GpsTime==1 && (ReadGpsData[42]=='1' || ReadGpsData[42]=='2')){   // if enable SOMQ orchestra and gps quality byte ok
           InterruptON(0,0,0); // keyb, enc, gps
           UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
@@ -2887,7 +2939,7 @@ void IncomingUDP(){
           packetBuffer[tmp+10] = B00111011;          // ;
           packetBuffer[9] = B00111010;               // :
 
-          String HexTimeString = String((GpsTimeMillis[2]+millis()+TxQthIpLatency), HEX);  // Actually UTC time in millis + latency in HEX  <------- LATENCY
+          String HexTimeString = String((GpsTimeMillisDiff+millis()+TxQthIpLatency), HEX);  // Actually UTC time in millis + latency in HEX  <------- LATENCY
           for (i = HexTimeString.length(); i < 7; i++) {            // Leading zero
             HexTimeString = String("0") + HexTimeString;
           }
@@ -2901,41 +2953,93 @@ void IncomingUDP(){
           packetBuffer[2] = packetBuffer[0];         // UTC
           packetBuffer[1] = B00111010;               // :
           packetBuffer[0] = B01110111;               // w
-          // Serial.println(HexTimeString);
-          // Serial.print(packetBuffer[1]);
-          // Serial.print(packetBuffer[2]);
-          // Serial.print(packetBuffer[3]);
-          // Serial.print(packetBuffer[4]);
-          // Serial.print(packetBuffer[5]);
-          // Serial.print(packetBuffer[6]);
-          // Serial.print(packetBuffer[7]);
-          // Serial.print(packetBuffer[8]);
-          // Serial.println(packetBuffer[9]);
+
+          if(DebuggingOutput!=0){
+            Debugging("SOMQ proxy");
+            Debuggingln();
+          }
 
           // TX to QTH 1
-          UdpCommand.beginPacket(SO1QIP, SO1QPort);
-          UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
-          SO1QLatency[0] = millis(); // set START time mark UDP command latency
-          UdpCommand.endPacket();
+          if(NET_ID !=1 ){
+            UdpCommand.beginPacket(SO1QIP, SO1QPort);
+            UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
+            SO1QLatency[0] = millis(); // set START time mark UDP command latency
+            UdpCommand.endPacket();
+            if(DebuggingOutput!=0){
+              Debugging("UDP send to IP1 ");
+              Debugging(String(SO1QIP[0]));
+              Debugging(".");
+              Debugging(String(SO1QIP[1]));
+              Debugging(".");
+              Debugging(String(SO1QIP[2]));
+              Debugging(".");
+              Debugging(String(SO1QIP[3]));
+              Debugging(":");
+              Debugging(String(SO1QPort));
+              Debuggingln();
+              Debugging(String(packetBuffer));   // , sizeof(packetBuffer) send buffer
+              Debuggingln();
+            }
+          }
 
           // TX to QTH 2
-          UdpCommand.beginPacket(SO2QIP, SO2QPort);
-          UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
-          SO1QLatency[1] = millis(); // set START time mark UDP command latency
-          UdpCommand.endPacket();
+          if(NET_ID !=2 ){
+            UdpCommand.beginPacket(SO2QIP, SO2QPort);
+            UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
+            SO1QLatency[1] = millis(); // set START time mark UDP command latency
+            UdpCommand.endPacket();
+            if(DebuggingOutput!=0){
+              Debugging("UDP send to IP2 ");
+              Debugging(String(SO2QIP[0]));
+              Debugging(".");
+              Debugging(String(SO2QIP[1]));
+              Debugging(".");
+              Debugging(String(SO2QIP[2]));
+              Debugging(".");
+              Debugging(String(SO2QIP[3]));
+              Debugging(":");
+              Debugging(String(SO2QPort));
+              Debuggingln();
+              Debugging(String(packetBuffer));   // , sizeof(packetBuffer) send buffer
+              Debuggingln();
+            }
+          }
 
-          // RemoteSwLatencyAnsw = 0;   // send command, wait to answer
-          InterruptON(1,1,1); // keyb, enc, gps
+          // TX to QTH 3
+          if(NET_ID !=3 ){
+            UdpCommand.beginPacket(SO3QIP, SO3QPort);
+            UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
+            SO1QLatency[2] = millis(); // set START time mark UDP command latency
+            UdpCommand.endPacket();
+            if(DebuggingOutput!=0){
+              Debugging("UDP send to IP3 ");
+              Debugging(String(SO3QIP[0]));
+              Debugging(".");
+              Debugging(String(SO3QIP[1]));
+              Debugging(".");
+              Debugging(String(SO3QIP[2]));
+              Debugging(".");
+              Debugging(String(SO3QIP[3]));
+              Debugging(":");
+              Debugging(String(SO3QPort));
+              Debuggingln();
+              Debugging(String(packetBuffer));   // , sizeof(packetBuffer) send buffer
+              Debuggingln();
+            }
+          }
 
           // and TX localy at UTC time -   0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
-          TxTimeMillis = (GpsTimeMillis[2]+millis()+TxQthIpLatency)-GpsTimeMillis[2] ;
+          TxTimeMillis = (GpsTimeMillisDiff+millis()+TxQthIpLatency)-GpsTimeMillisDiff ;
           if(TxTimeMillis>millis()){
+            Debugging("TX localy ");
             TxCwAtUTC();
           }
+          InterruptON(1,1,1); // keyb, enc, gps
 
         //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         }else{  // CW transsmit localy
           UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
+          Debugging("Local CW transmit");
           ptt_high(PTTmodeCW);
           tmp = sizeof(packetBuffer);
           for (i = 0; i < tmp; i++) {
@@ -2948,10 +3052,18 @@ void IncomingUDP(){
     }
 
     //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
     // COMMANDS [port 88]
+
+    //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     UDPpacketSize = UdpCommand.parsePacket();    // if there's data available, read a packet
     if (UDPpacketSize){
       UdpCommand.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
+      if(DebuggingOutput!=0){
+        Debuggingln();
+        Debugging(String("Incoming UDP packet, port 88"));
+        Debuggingln();
+      }
 
       //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // w:#######:[msg]; - CW transmit at UTC time
@@ -2959,19 +3071,44 @@ void IncomingUDP(){
           // convert TX UTC from HEX to long decimal
           TxUtcTimeMillis = hexToLong(String(packetBuffer[2]) + String(packetBuffer[3]) + String(packetBuffer[4]) + String(packetBuffer[5]) + String(packetBuffer[6]) + String(packetBuffer[7]) + String(packetBuffer[8]));
           // calculate TX time in internal millis timer
-          TxTimeMillis = TxUtcTimeMillis-GpsTimeMillis[2];  // GpsTimeMillis[X] - 0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
+          TxTimeMillis = TxUtcTimeMillis-GpsTimeMillisDiff;  // GpsTimeMillis[X] - 0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
+          if(DebuggingOutput!=0){
+            Debugging("PacketBuffer: ");
+            Debugging(String(packetBuffer[2]) + String(packetBuffer[3]) + String(packetBuffer[4]) + String(packetBuffer[5]) + String(packetBuffer[6]) + String(packetBuffer[7]) + String(packetBuffer[8]));
+            Debuggingln();
+            Debugging("TxUtcTime: ");
+            Debugging(String(TxUtcTimeMillis, DEC));
+            Debugging(" ");
+            Debugging(String(TxUtcTimeMillis, HEX));
+            Debuggingln();
+            Debugging("TxTimeMillis: ");
+            Debugging(String(TxTimeMillis, DEC));
+            Debugging(" ");
+            Debugging(String(TxTimeMillis, HEX));
+            Debuggingln();
+            Debugging("Millis: ");
+            Debugging(String(millis(), DEC));
+            Debugging(" ");
+            Debugging(String(millis(), HEX));
+            Debuggingln();
+          }
 
-          // Serial.println(String(packetBuffer[2]) + String(packetBuffer[3]) + String(packetBuffer[4]) + String(packetBuffer[5]) + String(packetBuffer[6]) + String(packetBuffer[7]) + String(packetBuffer[8]));
-          // Serial.println(TxUtcTimeMillis);
-          // Serial.println(TxTimeMillis);
-
-          if(TxTimeMillis>millis()){
-            // Serial.println("TX");
-            // Serial.println(TxTimeMillis-millis());
+          if(TxTimeMillis>millis() && TxTimeMillis<millis()+5000){  // 5s window
+            if(DebuggingOutput!=0){
+              Debugging("TX! after ");
+              Debugging(String(TxTimeMillis-millis()));
+              Debuggingln();
+            }
             TxCwAtUTC();
+          }else if(TxTimeMillis>millis()+5000){
+            // Arrived soon 5 sec window
+            Debugging("...arrived more than 5s soon.");
+            Debuggingln();
           }else{
             // Arrived late
             B4TxTimer=-1;
+              Debugging("...arrived late.");
+              Debuggingln();
           }
       }
 
@@ -2982,8 +3119,11 @@ void IncomingUDP(){
         RemoteSwLatencyAnsw = 1;           // answer packet received
 
         if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && HowRemoteSwitchID()<7){ // and ID < 7 (bank A/B)
-          // Serial2.print("Remote IP switch ID: ");
-          // Serial2.println(HowRemoteSwitchID());
+          if(DebuggingOutput!=0){
+            Debugging("Remote IP switch ID: ");
+            Debugging(String(HowRemoteSwitchID()));
+            Debuggingln();
+          }
 
           // need if RX answer from band change query
           rxShiftInButton[0] = packetBuffer[2];
@@ -3014,29 +3154,34 @@ void IncomingUDP(){
         DetectedRemoteSw [hexToDecBy4bit(packetBuffer[3])] [4]=UdpCommand.remotePort();
         RemoteSwLatencyAnsw = 1;           // answer packet received
 
-        // Serial2.println();
-        // Serial2.print("RX b:s");
-        // Serial2.print(packetBuffer[3]);
-        // Serial2.println(";");
-        // Serial2.println(hexToDecBy4bit(packetBuffer[3]), HEX);
-        //
-        // Serial2.print(packetBuffer[3], DEC);
-        // Serial2.println(" ");
-        // Serial2.println((int)packetBuffer[3] - 48, DEC);
-        //
-        // for (i = 0; i < 16; i++) {
-        //   Serial2.print(i);
-        //   Serial2.print("  ");
-        //   Serial2.print(DetectedRemoteSw [i] [0]);
-        //   Serial2.print(".");
-        //   Serial2.print(DetectedRemoteSw [i] [1]);
-        //   Serial2.print(".");
-        //   Serial2.print(DetectedRemoteSw [i] [2]);
-        //   Serial2.print(".");
-        //   Serial2.print(DetectedRemoteSw [i] [3]);
-        //   Serial2.print(":");
-        //   Serial2.println(DetectedRemoteSw [i] [4]);
-        // }
+        if(DebuggingOutput!=0){
+          Debuggingln();
+          Debugging("RX b:s");
+          Debugging(String(packetBuffer[3]));
+          Debugging(";");
+          Debuggingln();
+          Debugging(String(hexToDecBy4bit(packetBuffer[3]), HEX));
+          Debuggingln();
+
+          Debugging(String(packetBuffer[3], DEC));
+          Debuggingln();
+          Debugging(String((int)packetBuffer[3] - 48, DEC));
+          Debuggingln();
+          for (i = 0; i < 16; i++) {
+            Debugging(String(i));
+            Debugging("  ");
+            Debugging(String(DetectedRemoteSw [i] [0]));
+            Debugging(".");
+            Debugging(String(DetectedRemoteSw [i] [1]));
+            Debugging(".");
+            Debugging(String(DetectedRemoteSw [i] [2]));
+            Debugging(".");
+            Debugging(String(DetectedRemoteSw [i] [3]));
+            Debugging(":");
+            Debugging(String(DetectedRemoteSw [i] [4]));
+            Debuggingln();
+          }
+        }
       }
 
       //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -3076,6 +3221,62 @@ void IncomingUDP(){
       }
 
       //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+      // Store SOMQ IP [b:o#;]  #- open interface ID
+      if (GpsTime ==1 && packetBuffer[0] == 'b' && packetBuffer[1] == ':' && packetBuffer[2] == 'o' && packetBuffer[4] == ';'){
+        if(NET_ID !=1 && packetBuffer[3] == 1){    // remote QTH NetID 1 store IP
+          SO1QIP = UdpCommand.remoteIP();
+          SO1QPort = UdpCommand.remotePort();
+          if(DebuggingOutput!=0){
+            Debugging("Store IP1 ");
+            Debugging(String(SO1QIP[0]));
+            Debugging(".");
+            Debugging(String(SO1QIP[1]));
+            Debugging(".");
+            Debugging(String(SO1QIP[2]));
+            Debugging(".");
+            Debugging(String(SO1QIP[3]));
+            Debugging(":");
+            Debugging(String(SO1QPort));
+            Debuggingln();
+          }
+        }
+        if(NET_ID !=2 && packetBuffer[3] == 2){    // remote QTH NetID 2 store IP
+          SO2QIP = UdpCommand.remoteIP();
+          SO2QPort = UdpCommand.remotePort();
+          if(DebuggingOutput!=0){
+            Debugging("Store IP2 ");
+            Debugging(String(SO2QIP[0]));
+            Debugging(".");
+            Debugging(String(SO2QIP[1]));
+            Debugging(".");
+            Debugging(String(SO2QIP[2]));
+            Debugging(".");
+            Debugging(String(SO2QIP[3]));
+            Debugging(":");
+            Debugging(String(SO2QPort));
+            Debuggingln();
+          }
+        }
+        if(NET_ID !=3 && packetBuffer[3] == 3){    // remote QTH NetID 3 store IP
+          SO3QIP = UdpCommand.remoteIP();
+          SO3QPort = UdpCommand.remotePort();
+          if(DebuggingOutput!=0){
+            Debugging("Store IP3 ");
+            Debugging(String(SO3QIP[0]));
+            Debugging(".");
+            Debugging(String(SO3QIP[1]));
+            Debugging(".");
+            Debugging(String(SO3QIP[2]));
+            Debugging(".");
+            Debugging(String(SO3QIP[3]));
+            Debugging(":");
+            Debugging(String(SO3QPort));
+            Debuggingln();
+          }
+        }
+      }
+
+      //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // PTT
       if (packetBuffer[0] == 'p' && packetBuffer[1] == ':' && packetBuffer[3] == ':' && packetBuffer[5] == ';'){
         if(packetBuffer[4] == '0'){tmp = PTTPA;}
@@ -3110,8 +3311,8 @@ void IncomingUDP(){
 
         // 000-NetID [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
         if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '0' && packetBuffer[8] == ';'){
-          UNIQUE_ID = (hexToDecBy4bit(packetBuffer[6]) << 4) | hexToDecBy4bit(packetBuffer[7]);   // 4-bit left shift to combine them
-          MqttPub("net-id", 0, UNIQUE_ID);
+          NET_ID = (hexToDecBy4bit(packetBuffer[6]) << 4) | hexToDecBy4bit(packetBuffer[7]);   // 4-bit left shift to combine them
+          MqttPub("net-id", 0, NET_ID);
         }
 
         // 001-SERBAUD2 - 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200,
@@ -3162,9 +3363,16 @@ void IncomingUDP(){
           MqttPub("band-decoder-trx", 0, BAND_DECODER_IN);
         }
 
+        //  004-debugging
+        if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '4' && packetBuffer[7] == ';'){
+          DebuggingOutput = packetBuffer[6]-'0';
+          MqttPub("DebuggingOutput", 0, DebuggingOutput);
+          Debugging("Debug switch from IP to: ");
+          Debugging(String(DebuggingOutput));
+          Debuggingln();
+        }
 
       } // end configure
-
 
   //    lcd.print("      ");
     memset(packetBuffer, 0, sizeof(packetBuffer));   // Clear contents of Buffer
@@ -3211,16 +3419,17 @@ unsigned int hexToDec(String hexString) {
     }
     return decValue;
 }
+
 //-------------------------------------------------------------------------------------------------------
 
 void SendBroadcastUdpPTT(int status){         // Measured 2 ms
-  if(ETHERNET_MODULE==1){
+  if(ETHERNET_MODULE==1 && GpsTime!=1){
     InterruptON(0,0,0); // keyb, enc, gps
     BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
     TxUdpBuffer[0] = B01100010;         // b  - broadcast
     TxUdpBuffer[1] = B00111010;         // :
     TxUdpBuffer[2] = B01101111;         // o  - open interface device
-    TxUdpBuffer[3] = UNIQUE_ID;         // ID number
+    TxUdpBuffer[3] = NET_ID;         // ID number
     TxUdpBuffer[4] = BAND;              // Band number
     TxUdpBuffer[5] = B01110000;         // p  - PTT
     TxUdpBuffer[6] = status;
@@ -3232,6 +3441,45 @@ void SendBroadcastUdpPTT(int status){         // Measured 2 ms
   }
 }
 //-------------------------------------------------------------------------------------------------------
+
+void Debugging(String StringForDebug){    // not implemented yet !
+  if(DebuggingOutput!=0){
+    // Serial0 KEY
+    if(DebuggingOutput==1){
+      Serial.print(StringForDebug);
+    }
+    // Serial2 CAT
+    if(DebuggingOutput==2){
+      Serial2.print(StringForDebug);
+    }
+    // UDP IP
+    if(DebuggingOutput==3 && ETHERNET_MODULE==1){
+      DebuggingIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
+      UdpCommand.beginPacket(DebuggingIP, DebuggingPort);
+      // UdpCommand.beginMulticast(UdpCommand.BroadcastIP(), BroadcastPort, ETH.localIP()).
+        UdpCommand.print("NET_ID");
+        UdpCommand.print("debug:");
+        UdpCommand.print(StringForDebug);
+        UdpCommand.print(";");
+      UdpCommand.endPacket();
+    }
+  }
+}
+//-------------------------------------------------------------------------------------------------------
+
+void Debuggingln(){
+  if(DebuggingOutput!=0){
+    // Serial0 KEY
+    if(DebuggingOutput==1){
+      Serial.println();
+    }
+    // Serial2 CAT
+    if(DebuggingOutput==2){
+      Serial2.println();
+    }
+  }
+}
+//-------------------------------------------------------------------------------------------------------
 void SendBroadcastUdp(){
   if(ETHERNET_MODULE==1){
     InterruptON(0,0,0); // keyb, enc, gps
@@ -3240,16 +3488,19 @@ void SendBroadcastUdp(){
     UdpCommand.beginPacket(BroadcastIP, BroadcastPort);   // Send to IP and port from recived UDP command
     // UdpCommand.beginMulticast(UdpCommand.BroadcastIP(), BroadcastPort, ETH.localIP()).
       UdpCommand.print("b:o");
-      UdpCommand.write(UNIQUE_ID);
+      UdpCommand.write(NET_ID);
       UdpCommand.print(";");
     UdpCommand.endPacket();
 
-    // Serial2.print("TX Broadcast ");
-    // Serial2.print(BroadcastIP);
-    // Serial2.print(":");
-    // Serial2.print(BroadcastPort);
-    // Serial2.print("   ms ");
-    // Serial2.println(Timeout[8][0]);
+    if(DebuggingOutput!=0){
+      Debugging(String("TX Broadcast "));
+      Debugging(String(BroadcastIP));
+      Debugging(String(":"));
+      Debugging(String(BroadcastPort));
+      Debugging(String("   ms "));
+      Debugging(String(Timeout[8][0]));
+      Debuggingln();
+    }
 
     Timeout[8][0] = millis();                      // set time mark
     InterruptON(1,1,1); // keyb, enc, gps
@@ -3260,7 +3511,7 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
   InterruptON(0,0,0); // keyb, enc, gps
   if(ETHERNET_MODULE == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
     if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
-      String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/" + path;
+      String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       if (value != 0){
         String(value).toCharArray( mqttTX, 50 );
@@ -3271,7 +3522,7 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
     }
   }else{
     if (client.connect("arduinoClient")) {
-      String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/" + path;
+      String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       if (value != 0){
         String(value).toCharArray( mqttTX, 50 );
@@ -3288,14 +3539,14 @@ void MqttPubString(String path, String character){
   InterruptON(0,0,0); // keyb, enc, gps
   if(ETHERNET_MODULE == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
     if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
-      String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/" + path;
+      String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       character.toCharArray( mqttTX, 50 );
       client.publish(mqttPath, mqttTX);
     }
   }else{
     if (client.connect("arduinoClient")) {
-      String path2 = String(YOUR_CALL) + "/oi" + String(UNIQUE_ID) + "/" + path;
+      String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       character.toCharArray( mqttTX, 50 );
       client.publish(mqttPath, mqttTX);
@@ -3328,7 +3579,9 @@ void OpenInterfaceLCD(){    // LCD
       if(ptt_interlock_active == 1){
           lcd.write(byte(5));               // Interlock icon
       }else{
-        if(analogRead(SDPLUG)<128){
+        if(GpsTime==1 && (ReadGpsData[42]=='1' || ReadGpsData[42]=='2') ){      // gps quality byte
+          lcd.print("+");
+        } else if (analogRead(SDPLUG)<128){
           lcd.write(byte(4));               // microSD icon
         } else {
           lcd.print(" ");
@@ -3629,8 +3882,8 @@ void MenuToLCD(int nr){
     }
     case 22:{ // Network ID
       lcd.setCursor(CulumnPosition, 1);
-      lcd.print(UNIQUE_ID, HEX);
-      CulumnPosition=CulumnPosition+String(UNIQUE_ID).length();
+      lcd.print(NET_ID, HEX);
+      CulumnPosition=CulumnPosition+String(NET_ID).length();
     break;
     }
     case 23:{ // GpsTime
@@ -3666,9 +3919,9 @@ void MenuToLCD(int nr){
       lcd.setCursor(CulumnPosition-1, 1);
       if(GpsTime==1){
         if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){      // gps quality byte
-          // lcd.print(String(GpsTimeMillis[2], HEX));   // long to hex
-          lcd.print((GpsTimeMillis[2]+millis()+10000), HEX);   // utc time + 10s
-          CulumnPosition=CulumnPosition+String(GpsTimeMillis[2], HEX).length();
+          lcd.print(String(GpsTimeMillisDiff, HEX));   // long to hex
+          // lcd.print((GpsTimeMillisDiff+millis()+10000), HEX);   // utc time + 10s
+          CulumnPosition=CulumnPosition+String(GpsTimeMillisDiff, HEX).length();
         }else{
           lcd.print(" GPS QRX ");
           CulumnPosition=CulumnPosition+String(" GPS QRX ").length();
@@ -3693,6 +3946,12 @@ void MenuToLCD(int nr){
         lcd.print(" n/a  ");
         CulumnPosition=CulumnPosition+String(" n/a  ").length();
       }
+    break;
+    }
+    case 26:{ // Debug on Serial2
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(DebuggingOutput);
+      CulumnPosition=CulumnPosition+String(DebuggingOutput).length();
     break;
     }
 
