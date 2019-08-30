@@ -9,7 +9,7 @@
 #define initial_ptt_lead_time_tx1 0         // must be 0  ------
 #define initial_ptt_tail_time_tx1 0         // must be 0        |   SET in k3ng_keyer.ino
 #define initial_ptt_lead_time_tx2 0         // must be 0        |   Open Interface III config
-#define initial_ptt_tail_time_tx2 0         // must be 0        |   lines 1320-1330 
+#define initial_ptt_tail_time_tx2 0         // must be 0        |   lines 1320-1330
 #define initial_ptt_lead_time_tx3 0         // must be 0        |
 #define initial_ptt_tail_time_tx3 0         // must be 0  ------
 #define initial_ptt_lead_time_tx4 0         // PTT lead time in mS

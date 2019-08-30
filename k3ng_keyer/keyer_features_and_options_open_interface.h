@@ -3,15 +3,18 @@
 // compile time features and options - comment or uncomment to add or delete features
 // FEATURES add more bytes to the compiled binary, OPTIONS change code behavior
 
+// need for send CW transmit to MQTT
+#define FEATURE_COMMAND_LINE_INTERFACE        // (this no longer requires FEATURE_SERIAL)
+#define FEATURE_PADDLE_ECHO
+
 #define FEATURE_COMMAND_BUTTONS
-//#define FEATURE_COMMAND_LINE_INTERFACE        // (this no longer requires FEATURE_SERIAL)
 #define FEATURE_MEMORIES
 #define FEATURE_MEMORY_MACROS
 #define FEATURE_WINKEY_EMULATION    // disabling Automatic Software Reset is highly recommended (see documentation)
 //#define FEATURE_BEACON
 #define FEATURE_CALLSIGN_RECEIVE_PRACTICE
 //#define FEATURE_POTENTIOMETER         // do not enable unless you have a potentiometer connected, otherwise noise will falsely trigger wpm changes
-#define FEATURE_SERIAL_HELP
+// #define FEATURE_SERIAL_HELP
 //#define FEATURE_HELL
 //#define FEATURE_PS2_KEYBOARD        // Use a PS2 keyboard to send code - Change keyboard layout (non-US) in K3NG_PS2Keyboard.h.  Additional options below.
 //#define FEATURE_USB_KEYBOARD          // Use a USB keyboard to send code - Uncomment three lines in k3ng_keyer.ino (search for note_usb_uncomment_lines)
@@ -31,12 +34,11 @@
 //#define FEATURE_CAPACITIVE_PADDLE_PINS  // remove the bypass capacitors on the paddle_left and paddle_right lines when using capactive paddles
 //#define FEATURE_LED_RING                // Mayhew Labs Led Ring support
 #define FEATURE_ALPHABET_SEND_PRACTICE  // enables command mode S command - created by Ryan, KC2ZWM
-#define FEATURE_PTT_INTERLOCK 
+#define FEATURE_PTT_INTERLOCK
 //#define FEATURE_QLF
 //#define FEATURE_EEPROM_E24C1024
 //#define FEATURE_STRAIGHT_KEY
 //#define FEATURE_DYNAMIC_DAH_TO_DIT_RATIO
-//#define FEATURE_PADDLE_ECHO
 //#define FEATURE_STRAIGHT_KEY_ECHO
 //#define FEATURE_AMERICAN_MORSE
 
@@ -65,7 +67,7 @@
 //#define OPTION_KEEP_PTT_KEYED_WHEN_CHARS_BUFFERED    // this option keeps PTT high if there are characters buffered from the keyboard, the serial interface, or Winkey
 //#define OPTION_DISPLAY_NON_ENGLISH_EXTENSIONS  // LCD display suport for non-English (NO/DK/DE) characters - Courtesy of OZ1JHM
 //#define OPTION_UNKNOWN_CHARACTER_ERROR_TONE
-//#define OPTION_DO_NOT_SAY_HI
+// #define OPTION_DO_NOT_SAY_HI
 //#define OPTION_PS2_NON_ENGLISH_CHAR_LCD_DISPLAY_SUPPORT // makes some non-English characters from the PS2 keyboard display correctly in the LCD display (donated by Marcin sp5iou)
 //#define OPTION_PS2_KEYBOARD_RESET // reset the PS2 keyboard upon startup with 0xFF (contributed by Bill, W9BEL)
 //#define OPTION_SAVE_MEMORY_NANOKEYER

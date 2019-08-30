@@ -1259,13 +1259,19 @@ unsigned long automatic_sending_interruption_time = 0;
   - Band decoder BCD output
   - Input power voltage out of range warning
 
-  *** Before upload need change in Dhcp.h Ethernet2 library from ***
-      int beginWithDHCP(uint8_t *, unsigned long timeout = 60000, unsigned long responseTimeout = 5000);
-      to
-      int beginWithDHCP(uint8_t *, unsigned long timeout = 6000, unsigned long responseTimeout = 5000);
-
   Changelog:
   ----------
+  2019-08 - add mqtt-wall
+          - PTTin / Interlock choice
+          - send CW transmit to mqtt
+          - mqtt subscribe cw/rtty/freq/mode
+          - part of configure read from SD card oi0.cfg (default),
+            if press during start button, loaded another files
+            SET  button > oi1.cfg
+            MEM1 button > oi2.cfg
+            MEM2 button > oi3.cfg
+            MODE button > oi4.cfg
+  2019-07 - read mode from Kenwood CAT
   2017-03 - All modified line in original code signed with #OI3
           - Fix Sequencer PTT
   2017-02 - Interlock input (cinch, UDP)
@@ -1280,8 +1286,6 @@ unsigned long automatic_sending_interruption_time = 0;
   -----
   - if CAT disable, show in menu 04 off
   - stop playng RTTY memory
-  - show mqtt broker IP
-  - disable Ethernet, if press Mode button at startup
   - http check new firmware (github)
   - move configuration to SD card
   - ssb ptt from elbug
@@ -1291,37 +1295,52 @@ unsigned long automatic_sending_interruption_time = 0;
 
   Known Bugs
   ----------
+  - if PAtail  > PTTtail, trx ptt broken
+    PAlead 100
+    PAtail 10
+    PTTlead 100
+    PTTtail 35 nok 350 ok
+
   - RTTY RX decoder not work after tx mem or change mode
 
 ---------------------------------------------------------------------------------------------------------*/
+const char* REV = "20190830";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
 #define VOLTAGE_MEASURE_ADJUST 0.3    // ofset for precise adjust voltage measure
 // Add-ons
-boolean ETHERNET_MODULE = 1;          // enable USR-ES1 ETHERNET module (must be installed)
-boolean ACC_KEYBOARD    = 1;          // Shift in/out register via ACC https://remoteqth.com/wiki/index.php?page=ACC+Keyboard+for+Open+Interface+III
-boolean RemoteSwitch    = 1;          // IP controled remote RemoteSwitch https://remoteqth.com/wiki/index.php?page=IP+Switch+with+ESP32-GATEWAY
-boolean KeyboardAnswLed = 1;          // Keyboard Led shown answered UDP packet from IP RemoteSwitch
+bool EnableEthernet = 1;          // enable USR-ES1 ETHERNET module (must be installed)
+bool EnableDHCP = 1;                 // Enable DHCP
+bool ACC_KEYBOARD    = 0;          // Shift in/out register via ACC https://remoteqth.com/wiki/index.php?page=ACC+Keyboard+for+Open+Interface+III
+bool RemoteSwitch    = 0;          // IP controled remote RemoteSwitch https://remoteqth.com/wiki/index.php?page=IP+Switch+with+ESP32-GATEWAY
+bool KeyboardAnswLed = 0;          // Keyboard Led shown answered UDP packet from IP RemoteSwitch
                                       // + latency measure. Disable set localy
-boolean GpsTime         = 1;          // External GPS via ACC [FGPMMOPA6H chip] https://remoteqth.com/outdoor-gps-module.php
+bool GpsTime         = 1;          // External GPS via ACC [FGPMMOPA6H chip] https://remoteqth.com/outdoor-gps-module.php
                                       // also enabled SOMQ proxy (Single Operator Multi QTH) orchestra
                                       // If GPS synchronous time, received ascii on 89 UDP port formated with UTC time and send to some QTHs on command port 88
                                       // IP set manually below SOxQTH variable
 
 // FEATURES AND OPTIONS
-int DebuggingOutput     = 0;          // 0 = OFF, 1 - Serial0 KEY, 2 - Serial2 CAT, 3 - UDP
-boolean K3NG_KEYER      = 1;          // enable CW keyer
-boolean FSK_TX          = 1;          // enable RTTY keying
-boolean FSK_RX          = 1;          // enable RTTY decoder - EXPERIMENTAL!
+int DebuggingOutput  = 0;          // 0 = OFF, 1 - Serial0 KEY, 2 - Serial2 CAT, 3 - UDP, 4 - MQTT
+long DebuggingTimer;
+bool K3NG_KEYER      = 1;          // enable CW keyer
+bool FSK_TX          = 1;          // enable RTTY keying
+bool FSK_RX          = 0;          // enable RTTY decoder - EXPERIMENTAL!
 //=============================
-byte NET_ID          = 0x04;          // NetID [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
+byte NET_ID          = 0x00;          // NetID [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
 //=============================
-boolean MQTT_ENABLE     = 0;          // enable public to MQTT broker
+bool MQTT_ENABLE        = 1;          // enable public to MQTT broker
+                                      // [mosquitto_sub -v -h BROKER-IP -t '#']
+                                      // [mosquitto_pub -h BROKER-IP -d -t any/path -m "MESSAGE"]
 int MQTT_PORT           = 1883;       // MQTT broker PORT
-boolean MQTT_LOGIN      = 1;          // enable MQTT broker login
+bool MQTT_LOGIN         = 0;          // enable MQTT broker login
 char MQTT_USER          = 'login';    // MQTT broker user login
 char MQTT_PASS          = 'passwd';   // MQTT broker password
+
+byte mqttBroker[4]={54,38,157,134}; // MQTT broker IP address
+// const byte mqttBroker[4]={192, 168, 1, 200}; // MQTT broker IP address
+// const byte mqttBroker[4]={78, 111, 124, 210}; // MQTT broker IP address
 int UDP_RTTY_PORT       = 89;         // UDP port listen to CW/RTTY character (also proxy for SOMQ orchestra)
                                       // [echo -n "cq de ok1hra ok1hra test k;" | nc -u -w1 192.168.1.19 89]
 int UDP_COMMAND_PORT    = 88;         /* UDP port listen to RX command
@@ -1342,8 +1361,8 @@ int UDP_COMMAND_PORT    = 88;         /* UDP port listen to RX command
                                                    - 003-BAND_DECODER_IN #
                                                          0=disable 1=ICOM_CIV 2=KENWOOD_PC 3=YAESU_CAT 4=YAESU_CAT_OLD 5=INPUT_SERIAL
                                                    - 004-DebuggingOutput
-                                                         0=disable 1=serial1(KEY) 2=serial2(CAT) 3=UDP broadcast
-                                                         [echo -n "c:004:3;" | nc -u -w1 192.168.1.6 88] set
+                                                         0=disable 1=serial1(KEY) 2=serial2(CAT) 3=UDP broadcast 4=MQTT
+                                                         [echo -n "c:004:3;" | nc -u -w1 192.168.1.75 88] set
                                                          [tcpdump -A -i enp0s31f6 ether broadcast and udp port 88 | grep 'debug:' | cut -d ':' -f2 | cut -d ';' -f1] listen
 
                                       b:s#;  - Broadcast identify packet
@@ -1352,23 +1371,37 @@ int UDP_COMMAND_PORT    = 88;         /* UDP port listen to RX command
                                              ? r = Rotator, # = ID
                                              ? c = Controller, # = ID
 
+                                     b:o#*p0; - Broadcast Open Onterface PTT packet
+                                              - b = broadcast
+                                              - o = open interface
+                                              - # = ID number
+                                              - * = Band number
+                                              - p = ptt
+                                              - 0 = ptt status
+
                                       w:#######:[msg]; - CW transmit (not implemented yet)
                                                         [echo -n "w:000000f:cq de ok1hra ok1hra test k;" | nc -u -w1 192.168.1.19 88]
                                                         ####### UTC time when msg was be send [millis in hex]
                                                         [msg] transmit message
+
+ToDo
+- transfer wpm speed -> void speed_set(int wpm_set){ or \w### ??
+
 */
 
 String YOUR_CALL        = "OK1HRA";
 int MODE_AFTER_POWER_UP = 0;          // MODE after start up
 int MENU_AFTER_POWER_UP = 23;         // MENU after start up
-boolean BUTTON_BEEP     = 1;          // Mode button beep enable
+bool BUTTON_BEEP        = 1;          // Mode button beep enable
 
+bool InterlockEnable    = true;      // true = interlock, false = ptt in
+bool PttInStatus        = false;
 int SEQUENCERlead       = 0;          // SEQUENCER output lead delay ms between SEQ-->PA
 int SEQUENCERtail       = 0;          // SEQUENCER output tail delay ms          :    :                      :     PA-->SEQ
-int PAlead              = 10;         // PA output lead delay ms between         :    PA-->TRX               :     :    :
-int PAtail              = 100;        // PA output tail delay ms                 :    :    :                 TRX-->PA   :
-int PTTlead             = 10;         // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
-int PTTtail             = 350;        // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
+int PAlead              = 0;         // PA output lead delay ms between         :    PA-->TRX               :     :    :
+int PAtail              = 0;        // PA output tail delay ms                 :    :    :                 TRX-->PA   :
+int PTTlead             = 0;         // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
+int PTTtail             = 0;        // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
 /*                     |                                                        ^    ^    ^            ^    ^     ^
                     Master                                  SEQUENCERlead ______|    |    |            |    |     |_____ SEQUENCERtail
                     for CW                                         PAlead ___________|    |            |    |___________ PAtail
@@ -1378,15 +1411,21 @@ int PTTtail             = 350;        // PTT (FSK) tail delay ms                
  int PTTmodeCW          = 1;          // [1-3] How PTT TRX output use in mode CW
  int PTTmodeSSB         = 3;          // [1-3] How PTT TRX output use in mode SSB
  int PTTmodeFSK         = 1;          // [1-3] How PTT TRX output use in mode FSK
- int PTTmodeDIGI        = 3;          // [1-3] How PTT TRX output use in mode DIGI(AFSK)
+ int PTTmodeDIGI        = 2;          // [1-3] How PTT TRX output use in mode DIGI(AFSK)
+/*                          ts480 RC
+D41 - PTT1   >  8-DB25      3-REMOTE miniDIN (1-DATA audio input OFF) = FSK
+D22 - PTT2   > 20-DB25      3-DATA miniDIN (3-MIC audio input OFF) = AFSK  <- need AFSK D29 HIGH
+D25 - PTT3   > 22-DB25 MIC  5-MIC = SSB
+D31 - PA-PTT >  7-DB25 PA   12-DB15
+*/
 
 // BAND DECODER Inputs
- int SERBAUD2           = 9600;       // [baud] CAT Serial port in/out baudrate
- int BAND_DECODER_IN    = 1;          // 0=disable 1=ICOM_CIV 2=KENWOOD_PC 3=YAESU_CAT 4=YAESU_CAT_OLD 5=INPUT_SERIAL (telnet ascii input - cvs format [band],[freq]\n)
+ unsigned long SERBAUD2    = 115200;  // [baud] CAT Serial port in/out baudrate
+ int BAND_DECODER_IN       = 2;       // 0=disable 1=ICOM_CIV 2=KENWOOD_PC 3=YAESU_CAT 4=YAESU_CAT_OLD 5=INPUT_SERIAL (telnet ascii input - cvs format [band],[freq]\n)
                                       // 6=YAESU_BCD 7=ICOM_ACC (voltage 0-8V on ACC19 pin connector - need calibrate)
  int BAND_DECODER_WATCHDOG = 10000;   // [ms] determines the time, after which the BCD output switch to OFF and Frequency to 0 | 0=disable
  int BAND_DECODER_REQUEST  = 2000;    // [ms] use TXD output for sending frequency request, if not detect frequency in sniff mode  | 0=disable
- int CIV_ADRESS         = 0x56;       // CIV input HEX Icom adress (0x is prefix)
+ int CIV_ADRESS            = 0x56;       // CIV input HEX Icom adress (0x is prefix)
 
 // BAND DECODER Outputs [NOT IMPLEMENTED]
 // int SERBAUD3           = 115200;// [baud] CAT Serial port in/out baudrate
@@ -1450,21 +1489,50 @@ number of IP switch bank C position
 int IpSwitchEncoder;
 byte IpSwitchBankC[2];
 
-int CIVModeSet[13]{
-/* ICOM mode  ->   Open Interface mode 0-CW Keyer, 1-CW PC, 2-SSB, 3-FSK PC, 4-FSK, 5-DIGITAL(AFSK)*/
+const int CIVModeSet[13]{
+/* ICOM mode  ->  Open Interface mode
+                  0|CWK     -WinKey
+                  1>CWD     -cw/dtr, ptt/rts
+                  2|SSB     -foot_switch/ptt, audio to mic
+                  3>FSK PC  -fsk/dtr, ptt/rts
+                  4|FSK     -serial 9600 baud
+                  5|DIG     -AFSK, ptt/rts, audio to rear */
 /* LSB        */	2,
-/* USB        */	2,
+/* USB        */	5,
 /* AM         */	2,
 /* CW         */	0,
-/* RTTY (FSK) */	3,
+/* RTTY (FSK) */	4,
 /* FM 	      */  2,
 /* Wide FM    */	2,
 /* CW-R       */	0,
-/* RTTY-R     */  3,
+/* RTTY-R     */  4,
 /* not use    */  0,
 /* not use    */  0,
 /* S-AM       */  2,
 /* PSK 	      */  5
+};
+
+const int KenwoodCatModeSet[10]{
+/* KENWOOD mode  ->   Open Interface mode 0-CW Keyer, 1-CW PC, 2-SSB, 3-FSK PC, 4-FSK, 5-DIGITAL(AFSK)*/
+/* No mode    */	0,
+/* LSB        */	2,
+/* USB        */	2,
+/* CW         */	0,
+/* FM 	      */  2,
+/* AM         */	2,
+/* RTTY (FSK) */	4,
+/* CW-R       */	0,
+/* Tune       */	0,
+/* RTTY-R     */  4
+};
+const int KenwoodCatModeSetReverse[6]{
+/* OI3 mode > 0 No mode | 1 LSB | 2 USB | 3 CW | 4 FM | 5 AM | 6 RTTY(FSK) | 7 CW-R | 8 Tune | 9 RTTY-R */
+/* CW Keyer   */  3,
+/* CW PC      */  3,
+/* SSB        */  1,
+/* FSK PC     */  6,
+/* FSK        */  6,
+/* DIG(AFSK)  */  1
 };
 
 // BAND DECODER antenna NAME ON LCD MENU
@@ -1484,23 +1552,31 @@ char* ANTname[12] = {
 };
 
 // ETHERNET - MQTT
-// if (ETHERNET_MODULE == true){ //--------------------------------------------------------------------------- vypnout asi
+// if (EnableEthernet == true){ //--------------------------------------------------------------------------- vypnout asi
+  const byte RemoteDevice = 's';
+  const byte ThisDevice = 'o';
+  bool EthLinkStatus = 0;
+  long EthLinkStatusTimer[2]{1500,1000};
   #include <SPI.h>
-  #include <Ethernet2.h> // and disable on line #749
-  #include <EthernetUdp2.h>
+  #include <Ethernet.h> // and disable on line #749
+  #include <EthernetUdp.h>
+  // #include <Ethernet2.h> // and disable on line #749
+  // #include <EthernetUdp2.h>
   #include <PubSubClient.h>
   byte LastMac = 0xFF - NET_ID;
   byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, LastMac};
-  boolean USE_DHCP = 1;                    // Uncoment to Enable DHCP
   IPAddress ip(192, 168, 1, 220);         // IP
   IPAddress gateway(192, 168, 1, 1);    // GATE
   IPAddress subnet(255, 255, 255, 0);     // MASK
   IPAddress myDns(8, 8, 8, 8);            // DNS (google pub)
- // IPAddress server(192, 168, 1, 200);       // MQTT broker IP address
-  IPAddress server(37, 187, 106, 16);       // test.mosquitto.org MQTT broker
+  // MQTT
+  IPAddress MqttServer(mqttBroker[0], mqttBroker[1], mqttBroker[2], mqttBroker[3]);       // MQTT broker IP address
   EthernetClient ethClient;
-  PubSubClient client(ethClient);
-//  PubSubClient client(server, 1883, callback, ethClient);
+  PubSubClient mqttClient(ethClient);
+  long lastMqttReconnectAttempt = 0;
+
+  //  PubSubClient mqttClient(server, 1883, callback, ethClient);
+  // bool MqttConnected = false;
   unsigned int UdpCommandPort = 88;       // local UDP port listen to command
   unsigned int UdpRttyPort = 89;          // local UDP port listen to CW/RTTY transmit
   #define UDP_TX_PACKET_MAX_SIZE 40       // MIN 30
@@ -1521,7 +1597,25 @@ char* ANTname[12] = {
   byte TxUdpBuffer[10];
   IPAddress DebuggingIP(0, 0, 0, 0);        // Debugging broadcast IP address
   int DebuggingPort       = 66;             // destination broadcast packet port
-// }
+
+// http
+#include <EthernetServer.h>
+EthernetServer webServer(80);           // Web server PORT
+String HTTP_req;
+char linebuf[80];
+int charcount=0;
+
+// Telnet - NOT IMPLEMENTED
+#define MAX_SRV_CLIENTS 1
+EthernetServer TelnetServer(23);
+EthernetClient TelnetServerClients[MAX_SRV_CLIENTS];
+// IPAddress TelnetServerClientAuth;
+bool TelnetAuthorized = false;
+int TelnetAuthStep=0;
+int TelnetAuthStepFails=0;
+int TelnetLoginFails=0;
+long TelnetLoginFailsBanTimer[2]={0,600000};
+int RandomNumber;
 
 // microSD
 #include <SD.h>
@@ -1540,9 +1634,12 @@ long GpsUtc[3];
 byte GpsBufferPos  = 0;
 long TxUtcTimeMillis;
 long TxTimeMillis;
+bool GpsStatus = false;
+bool GpsStatusPrev = true;
 
 // SOMQ orchestra - need GPS
 const int SOxQTH = 3;                        // Number of QTH - need manually insert SOxQIP, SOxQPort variables and expand TX QTH in IncomingUDP() subroutine
+byte MASTER_NET_ID = 0x00;                 // all slave controlled by this ID via mqtt
 long B4TxTimer;
 int TxQthIpLatency = 100;                    // ms 120?
 long SO1QLatency[SOxQTH];
@@ -1555,10 +1652,10 @@ IPAddress SO3QIP(192, 168, 1, 40);           // remote QTH NetID 3 IP
 int SO3QPort = 88;                           // remote QTH NetID 3 port
 
 // Serial2FSK (FSK TX)
-int SERBAUD0                  = 1200;       // Serial0 in/out baudrate (seria2fsk), if set 1200 may be controled as winkey
-boolean AFSK_ENABLE           = 0;          // AFSK AUDIO (serial2fsk, fsk memory)
-boolean SERIAL_FSK_TX_ECHO    = 0;          // enable TX echo on serial port
-boolean SHOW_HIDDEN_FSK_CHAR  = 0;          // show invisible TX characters on LCD
+int SERBAUD0                  = 9600;       // Serial0 in/out baudrate (seria2fsk), if set 1200 may be controled as winkey
+bool AFSK_ENABLE           = 0;          // AFSK AUDIO (serial2fsk, fsk memory)
+bool SERIAL_FSK_TX_ECHO    = 0;          // enable TX echo on serial port
+bool SHOW_HIDDEN_FSK_CHAR  = 0;          // show invisible TX characters on LCD
 int MARK                      = 1445;       // [Hz] AFSK mark 1445 / 2295 Hz
 int SPACE                     = 1275;       // [Hz] AFSK space 1275 / 2125 Hz
 #define FMARK    HIGH            // FSK mark level [LOW/HIGH]
@@ -1605,7 +1702,7 @@ byte SequencerLevel = 0;   // 0 = off, 1-2-3 = PTT1-2-3, 4 = PA, 5 = SEQ
 */
 //---------------------------------------------------------------------------------------------------------
 
-// PIN SETTINGS
+// PIN SETTINGS https://remoteqth.com/wiki/index.php?page=Open+interface+III
 #if defined(PCB_REV_3_1415) // LCD A2, 37, 6, 7, 8, 9 (RS, E, D4, D5, D6, D7)
   const int DCIN = A7;      // measure input voltage
   const int DC3V = A6;      // measure 3,3V
@@ -1709,12 +1806,13 @@ byte SequencerLevel = 0;   // 0 = off, 1-2-3 = PTT1-2-3, 4 = PA, 5 = SEQ
 // SETTINGS
 #include <math.h>
 float DCinVoltage;
+float PrevDCinVoltage;
 int i = 0;
 int tmp = 0;
-boolean LcdNeedRefresh = 0;
-
+bool LcdNeedRefresh = 0;
 
 // int Loop[3] = {MODE_AFTER_POWER_UP, MENU_AFTER_POWER_UP, MENU_AFTER_POWER_UP};     //  Mode, Menu, previous Menu
+int ActualModePrev = MODE_AFTER_POWER_UP;
 int ActualMode = MODE_AFTER_POWER_UP;
 int ActualMenu = MENU_AFTER_POWER_UP;
 int PreviousMenu = MENU_AFTER_POWER_UP;
@@ -1736,9 +1834,10 @@ char* modeLCD[6][2]= {
     {"|DIG", "Data  AFSK"},
 };
 
-char* MenuTree[27]= {
+char* MenuTree[28]= {
   "          ",      //  0 call
-  "PCB 3.1415",      //  1
+  // "PCB 3.1415",      //  1
+  "rev",             //  1
   "DCin",            //  2
   "3V3",             //  3
   "CAT",             //  4
@@ -1764,6 +1863,7 @@ char* MenuTree[27]= {
   "D ",              // 24  difference between UTC in millis and internal millis timer
   "B4TX ",           // 25  Before transmit delay (if slave in SOMQ orchestra - incoming 'w' UDP command)
   "Debug ",          // 26  Debug values on Serial2
+  "PTTin ",          // 27  if enable, disable Interlock
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -1778,10 +1878,10 @@ byte InterlockFromUdpActive = LOW;
 
 // FSK RX
 #include <FlexiTimer2.h>
-boolean  dsp;
+bool  dsp;
 byte     ti;
 uint8_t  baudot;
-static boolean fig;
+static bool fig;
 static byte    x;
 static byte    y;
 static char    chIn;
@@ -1790,13 +1890,13 @@ static char    c[21];
 // FSK TX
 #include <stdio.h>
 int     OneBit = 1/BaudRate*1000;
-boolean d1;
-boolean d2;
-boolean d3;
-boolean d4;
-boolean d5;
-boolean space;
-boolean fig1;
+bool d1;
+bool d2;
+bool d3;
+bool d4;
+bool d5;
+bool space;
+bool fig1;
 int     fig2;
 char    ch;
 int     r2;
@@ -1816,13 +1916,13 @@ byte DWNi[8] = {0b11111,0b11111,0b01110,0b00100,0b10001,0b11011,0b11111,0b11111}
 #define ShiftInDataPin ACC5
 #define ShiftInLatchPin ACC4
 #define ShiftInClockPin ACC6
-boolean rxShiftInRead;
+bool rxShiftInRead;
 byte rxShiftInButton[3]{0,0,0};  // three button bank: 1-8 switch, 9-16 one from, encoder...
 
 // BAND DECODER
 int BAND;
-int BANDs;
-long freq = 0;
+unsigned long freq = 0;
+unsigned long prevfreq=1;
 // #if defined(ICOM_ACC)
     const int AD = ACC19;
     int VALUE = 0;
@@ -1832,10 +1932,10 @@ long freq = 0;
     int counter = 0;
 // #endif
 // #if defined(YAESU_BCD)
-    boolean YBCD1;
-    boolean YBCD2;
-    boolean YBCD3;
-    boolean YBCD4;
+    bool YBCD1;
+    bool YBCD2;
+    bool YBCD3;
+    bool YBCD4;
     int bandBCD;
 // #endif
 // #if defined(KENWOOD_PC) || defined(YAESU_CAT)
@@ -1857,16 +1957,16 @@ long freq = 0;
     int fromAdress = 14;              // 0E
     byte rdI[10];   //read data icom
     String rdIS;    //read data icom string
-    long freqPrev1;
+    unsigned long freqPrev1;
     byte incomingByte = 0;
     int stateMachine = 1;  // state machine
 // #endif
 // #if defined(KENWOOD_PC_OUT) || defined(YAESU_CAT_OUT)
-    long freqPrev2;
+    unsigned long freqPrev2;
 // #endif
 // #if defined(BCD_OUT)
     char BCDout;
-    boolean BCDmatrixOUT[4][11] = { /*
+    bool BCDmatrixOUT[4][11] = { /*
     --------------------------------------------------------------------
     Band # to output relay   0   1   2   3   4   5   6   7   8   9  10
     (Yaesu BCD)                 160 80  40  30  20  17  15  12  10  6m
@@ -1989,6 +2089,7 @@ void setup()
   // #endif
 
   // other
+  // lcd.createChar(3, Eth);
   lcd.createChar(4, microSD);
   lcd.createChar(5, InterlockChar);
   lcd.createChar(6, Lpipe);
@@ -1999,7 +2100,7 @@ void setup()
 //            lcd.print((char)188);
 //            lcd.print((char)199);
 //            lcd.print((char)246);
-//            lcd.print(" 14.023,22");
+//            lcd.print(F(" 14.023,22"));
 
   // CWK - loop1 preset
   digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
@@ -2019,10 +2120,10 @@ void setup()
   }else{
     ConfigFile = "oi0.cfg";
   }
-  lcd.setCursor(0, 0);
+  lcd.setCursor(0, 1);
   if(analogRead(SDPLUG)>128){    // microSD unplug
     lcd.print(F(" micro SD card  "));
-    lcd.setCursor(0, 1);
+    delay(1000);
     lcd.print(F(" not present   "));
     delay(500);
   }else{
@@ -2088,20 +2189,26 @@ void setup()
   }
 
   //ETHERNET - MQTT - UDP
-  if (ETHERNET_MODULE==1){
+  if (EnableEthernet==1){
     IdBySmtPad();
     LastMac = 0xFF - NET_ID;
     mac[5] = LastMac;
+    if(MQTT_ENABLE == true){
+      mqttClient.setServer(MqttServer, MQTT_PORT);
+      mqttClient.setCallback(MqttRx);
+      // Debugging("MQTT set callback");
+    }
+    EthernetCheck();
 
-    if (USE_DHCP == 1){  // initialize the ethernet device
+/*    if (USE_DHCP == 1){  // initialize the ethernet device
       Ethernet.begin(mac);
     }else{
       Ethernet.begin(mac, ip, myDns, gateway, subnet);
     }
     if(MQTT_ENABLE == true){
-      client.setServer(server, MQTT_PORT);
+      mqttClient.setServer(server, MQTT_PORT);
     }
-    //client.setCallback(callback);
+    //mqttClient.setCallback(callback);
     UdpCommand.begin(UdpCommandPort);   // UDP
     UdpRtty.begin(UdpRttyPort);
 
@@ -2114,15 +2221,18 @@ void setup()
     lcd.print(Ethernet.localIP());
     delay(2500);
     if (MQTT_ENABLE == true && MQTT_LOGIN == true){
-      if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)){
+      if (mqttClient.connect("arduinoClient", MQTT_USER, MQTT_PASS)){
         AfterMQTTconnect();
       }
     }else if(MQTT_ENABLE == true){
-      if (client.connect("arduinoClient")){
+      if (mqttClient.connect("arduinoClient")){
         AfterMQTTconnect();
       }
     }
     SendBroadcastUdp();
+*/
+
+
   }
 
   // GpsTime [FGPMMOPA6H chip]
@@ -2132,12 +2242,12 @@ void setup()
     // Serial3.setTimeout(10);
     delay(100);
     // Switch to $GPGGA only
-    Serial3.print("$PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n");
+    Serial3.print(F("$PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n"));
   }
   SwitchHardware(MODE_AFTER_POWER_UP);
-  InterruptON(1,1,1); // keyb, enc, gps
+  InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
 
-  Serial.begin(9600);
+  // Serial.begin(1200);
   YOUR_CALL.toCharArray(MenuTree[0], 10);
 
 } // SETUP END
@@ -2145,42 +2255,42 @@ void setup()
 //-------------------------------------------------------------------------------------------------------
 
 void loop() {
+  EthernetCheck();
+  Mqtt();
+  BandDecoder();
+  DCinMeasure();
+  OpenInterfaceLCD();   // second line print
+  OpenInterfaceMENU();  // Menu button and HW preset
+  OpenInterfaceMODE();  // MODE in->out and features
+  IncomingUDP();        // Incomming UDP command and transmit characters
+  check_ptt_low();
+  RemoteSwQuery();
+  GPStimeWatchdog();
+  mqtt_wall();
+  // Telnet();
 
-    OpenInterfaceInterlock();
-    BandDecoder();
-    DCinMeasure();
-    OpenInterfaceLCD();   // second line print
-    OpenInterfaceMENU();  // Menu button and HW preset
-    OpenInterfaceMODE();  // MODE in->out and features
-    IncomingUDP();      // Incomming UDP command and transmit characters
-    check_ptt_low();
-    RemoteSwQuery();
-    // if (millis() - Timeout[8][0] > (Timeout[8][1])){
-    //   SendBroadcastUdp();
-    // }
+  // if (millis() - Timeout[8][0] > (Timeout[8][1])){
+  //   SendBroadcastUdp();
+  // }
 
-    // GPStime watchdog
-    if ((millis() - Timeout[9][0]) > Timeout[9][1] && GpsTime==1){
-      ReadGpsData[42] = 0; // reset gps quality byte
-      Timeout[9][0] = millis();
-    }
 }    // end loop
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
 // http://www.catonmat.net/blog/low-level-bit-hacks-you-absolutely-must-know/
 
 void IdBySmtPad(){
-  NET_ID = 0;
-  if(digitalRead(SMTpad1)==0){
-    NET_ID = NET_ID | (1<<0);    // Set the n-th bit
+  if(NET_ID==0x00){
+    NET_ID = 0;
+    if(digitalRead(SMTpad1)==0){
+      NET_ID = NET_ID | (1<<0);    // Set the n-th bit
+    }
+    if(digitalRead(SMTpad2)==0){
+      NET_ID = NET_ID | (1<<1);    // Set the n-th bit
+    }
+    if(digitalRead(SMTpad3)==0){
+      NET_ID = NET_ID | (1<<2);    // Set the n-th bit
+    }
   }
-  if(digitalRead(SMTpad2)==0){
-    NET_ID = NET_ID | (1<<1);    // Set the n-th bit
-  }
-  if(digitalRead(SMTpad3)==0){
-    NET_ID = NET_ID | (1<<2);    // Set the n-th bit
-  }
-
 }
 
 void GpsPpsInterrupt(){    // run from interrupt
@@ -2229,26 +2339,10 @@ void GpsPpsInterrupt(){    // run from interrupt
       GpsTimeMillisUTC = (GpsUtc[0]*3600000) + (GpsUtc[1]*60000) + (GpsUtc[2]*1000) ;
       GpsTimeMillisDiff = GpsTimeMillisUTC - GpsTimeMillis;   // difference between UTC-PPS
 
-      if(DebuggingOutput!=0){
-        Debugging(String((char*)ReadGpsData));
-        Debugging(" UTC|diff|millis: ");
-        Debugging(String(GpsUtc[0]));
-        Debugging(":");
-        Debugging(String(GpsUtc[1]));
-        Debugging(":");
-        Debugging(String(GpsUtc[2]));
-        Debugging(" ");
-        Debugging(String(GpsTimeMillisUTC));
-        Debugging(",");
-        Debugging(String(GpsTimeMillisUTC, HEX));
-        Debugging("|");
-        Debugging(String(GpsTimeMillisDiff));
-        Debugging(",");
-        Debugging(String(GpsTimeMillisDiff, HEX));
-        Debugging("|");
-        Debugging(String(millis()));
-        Debuggingln();
-      }
+      Debugging(String((char*)ReadGpsData)+" UTC|diff|millis: "+String(GpsUtc[0])+":"+String(GpsUtc[1])+":"+String(GpsUtc[2])+" "+String(GpsTimeMillisUTC)+","+String(GpsTimeMillisUTC, HEX)+"|"+String(GpsTimeMillisDiff)+","+String(GpsTimeMillisDiff, HEX)+"|"+String(millis()) );
+    }else{
+      // error beep
+      // TON(2);
     }
     Timeout[9][0] = millis();
     if(ActualMenu==23 || ActualMenu==24 ){
@@ -2259,7 +2353,28 @@ void GpsPpsInterrupt(){    // run from interrupt
   }
 }
 //-------------------------------------------------------------------------------------------------------
+void GPStimeWatchdog(){
+  if ((millis() - Timeout[9][0]) > Timeout[9][1] && GpsTime==1){
+    ReadGpsData[42] = 0; // reset gps quality byte
+    Serial3.print(F("$PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n"));
+    Debugging("GPS-reInit");
+    Timeout[9][0] = millis();
+  }
 
+  if(GpsTime==1){
+    if((ReadGpsData[42]=='1' || ReadGpsData[42]=='2')){
+      GpsStatus=true;
+    }else{
+      GpsStatus=false;
+    }
+    if(GpsStatus!=GpsStatusPrev){
+      MqttPubString("gps_qrv", String(GpsStatus), false);
+      GpsStatusPrev=GpsStatus;
+    }
+  }
+}
+
+//-------------------------------------------------------------------------------------------------------
 void AccKeyboardShift(){    // run from interrupt
   if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0 && SequencerLevel == 0){       // if detect IP Switch for this band and PTT OFF
     digitalWrite(ShiftInLatchPin,1);   //Set latch pin to 1 to get recent data into the CD4021
@@ -2296,31 +2411,12 @@ void AccKeyboardShift(){    // run from interrupt
         }
         digitalWrite(ShiftInClockPin, 1);
     }
-    if(DebuggingOutput!=0){
-      Debugging("BAND: ");
-      Debugging(String(BAND));
-      Debuggingln();
+    Debugging("BAND: "+String(BAND));
 
-      for (i = 0; i < 10; i++) {
-        Debugging(String(i));
-        Debugging(String(DetectedRemoteSw [i] [0]));
-        Debugging(".");
-        Debugging(String(DetectedRemoteSw [i] [1]));
-        Debugging(".");
-        Debugging(String(DetectedRemoteSw [i] [2]));
-        Debugging(".");
-        Debugging(String(DetectedRemoteSw [i] [3]));
-        Debugging(":");
-        Debugging(String(DetectedRemoteSw [i] [4]));
-        Debuggingln();
-      }
-
-      Debugging("  ");
-      Debugging(String(RemoteSwIP));
-      Debugging(":");
-      Debugging(String(RemoteSwPort));
-      Debugging("  ->  ");
+    for (i = 0; i < 10; i++) {
+      Debugging(String(i)+String(DetectedRemoteSw [i] [0])+"."+String(DetectedRemoteSw [i] [1])+"."+String(DetectedRemoteSw [i] [2])+"."+String(DetectedRemoteSw [i] [3])+":"+String(DetectedRemoteSw [i] [4]));
     }
+    Debugging("  "+String(RemoteSwIP)+":"+String(RemoteSwPort)+"  ->  ");
 
     // SET IP:PORT from array by relay ID (id = rows)
     // RemoteSwIP = DetectedRemoteSw[packetBuffer[3]];
@@ -2328,15 +2424,10 @@ void AccKeyboardShift(){    // run from interrupt
     RemoteSwIP = DetectedRemoteSw[BandToRemoteSwitchID[BAND]];
     RemoteSwPort = DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4];
 
-    if(DebuggingOutput!=0){
-      Debugging(String(RemoteSwIP));
-      Debugging(":");
-      Debugging(String(RemoteSwPort));
-      Debuggingln();
-    }
+    Debugging(String(RemoteSwIP)+":"+String(RemoteSwPort));
 
     // UDP send to Switch
-    if(ETHERNET_MODULE == 1 && RemoteSwitch == 1){
+    if(EnableEthernet == 1 && RemoteSwitch == 1 && EthLinkStatus==1){
       TxUdpBuffer[0] = B01110011;         // s
       TxUdpBuffer[1] = B00111010;         // :
       TxUdpBuffer[2] = rxShiftInButton[0];  // set buffer
@@ -2351,8 +2442,8 @@ void AccKeyboardShift(){    // run from interrupt
     }
 
     // MQTT send
-    MqttPub("KeybBank0", 0, rxShiftInButton[0]);
-    MqttPub("KeybBank1", 0, rxShiftInButton[1]);
+    MqttPubString("KeybBank0", String(rxShiftInButton[0]), false);
+    MqttPubString("KeybBank1", String(rxShiftInButton[1]), false);
     // MqttPub("KeybBank2", 0, rxShiftInButton[2]);   // bank2 disable
 
     // SHIFT OUT
@@ -2367,7 +2458,7 @@ void AccKeyboardShift(){    // run from interrupt
   }
 }
 //-------------------------------------------------------------------------------------------------------
-void InterruptON(int keyb, int enc, int gps){
+void InterruptON(int keyb, int enc, int gps, int interlock){
 
   if(keyb==0){
     detachInterrupt(digitalPinToInterrupt(ShiftInInterruptPin));
@@ -2385,6 +2476,12 @@ void InterruptON(int keyb, int enc, int gps){
     detachInterrupt(digitalPinToInterrupt(ACC16));
   }else if(gps==1 && GpsTime==1){
     attachInterrupt(digitalPinToInterrupt(ACC16), GpsPpsInterrupt, FALLING);
+  }
+
+  if(interlock==0){
+    detachInterrupt(digitalPinToInterrupt(INTERLOCK));
+  }else if(gps==1){
+    attachInterrupt(digitalPinToInterrupt(INTERLOCK), OpenInterfaceInterlock, CHANGE);
   }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -2433,7 +2530,7 @@ void EncoderInterrupt(){
     RemoteSwIP = DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8];
     RemoteSwPort = DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4];
     // UDP send to Switch
-    if(ETHERNET_MODULE == 1){
+    if(EnableEthernet == 1 && EthLinkStatus==1){
       TxUdpBuffer[2] = 0;
       TxUdpBuffer[3] = 0;
       TxUdpBuffer[0] = B01110011;         // s
@@ -2453,7 +2550,7 @@ void EncoderInterrupt(){
     }
 
     // MQTT send
-    MqttPub("IpSWEncoder", 0, IpSwitchEncoder);
+    MqttPubString("IpSWEncoder", String(IpSwitchEncoder), false);
     LcdNeedRefresh=1;
   }
 }
@@ -2480,79 +2577,82 @@ void readSDSettings(){
 			character = myFile.read();
 		}
 		if(character == ']'){
-	  //Debuuging Printing
-			// Serial.print("Name:");
-			// Serial.print(settingName);
-			// Serial.print(": ");
-			// Serial.println(settingValue);
 
-      if(settingName == "ETHERNET_MODULE"){
-				ETHERNET_MODULE = (boolean)settingValue.toInt();
-        lcd.setCursor(13, 1);
-          lcd.print(F("."));
-      }else if(settingName == "K3NG_KEYER"){
-		    K3NG_KEYER = (boolean)settingValue.toInt();
-      }else if(settingName == "FSK_TX"){
-        FSK_TX = (boolean)settingValue.toInt();
-      }else if(settingName == "FSK_RX"){
-        FSK_RX = (boolean)settingValue.toInt();
-      }else if(settingName == "NET_ID"){
-        // NET_ID = settingValue;
-      }else if(settingName == "MQTT_PORT"){
-        MQTT_PORT = settingValue.toInt();
-      }else if(settingName == "MQTT_LOGIN"){
-        MQTT_LOGIN = (boolean)settingValue.toInt();
+    Debugging("["+String(settingName)+"="+String(settingValue)+"]");
 
-      // else if(settingName == "MQTT_USER")
-      //   MQTT_USER = settingValue.toCharArray(buf, len) ;
-      // else if(settingName == "MQTT_PASS")
-      //   MQTT_PASS = settingValue;
-
-      }else if(settingName == "UDP_RTTY_PORT"){
-        UDP_RTTY_PORT= settingValue.toInt();
-      }else if(settingName == "UDP_COMMAND_PORT"){
-        UDP_COMMAND_PORT = settingValue.toInt();
+      if(settingName == "NET_ID"){
+        // NET_ID = (byte)settingValue.toInt();
+        unsigned char buff[3];
+        settingValue.toCharArray(buff, 3);
+        NET_ID = hexToDecBy4bit(buff[0])<<4 | hexToDecBy4bit(buff[1]);
       }else if(settingName == "YOUR_CALL"){
-        YOUR_CALL= settingValue;
-      }else if(settingName == "MODE_AFTER_POWER_UP"){
-        MODE_AFTER_POWER_UP = settingValue.toInt();
-      }else if(settingName == "MENU_AFTER_POWER_UP"){
-        MENU_AFTER_POWER_UP = settingValue.toInt();
-      }else if(settingName == "BUTTON_BEEP"){
-        BUTTON_BEEP = (boolean)settingValue.toInt();
+        YOUR_CALL = String(settingValue);
+      }else if(settingName == "InterlockEnable"){
+        InterlockEnable = (bool)settingValue.toInt();
       }else if(settingName == "SEQUENCERlead"){
         SEQUENCERlead = settingValue.toInt();
       }else if(settingName == "SEQUENCERtail"){
         SEQUENCERtail = settingValue.toInt();
       }else if(settingName == "PAlead"){
         PAlead = settingValue.toInt();
-        lcd.print(F("."));
       }else if(settingName == "PAtail"){
         PAtail = settingValue.toInt();
       }else if(settingName == "PTTlead"){
         PTTlead = settingValue.toInt();
       }else if(settingName == "PTTtail"){
         PTTtail = settingValue.toInt();
-      }else if(settingName == "PTTmodeCW"){
-        PTTmodeCW = settingValue.toInt();
-      }else if(settingName == "PTTmodeSSB"){
-        PTTmodeSSB = settingValue.toInt();
-      }else if(settingName == "PTTmodeFSK"){
-        PTTmodeFSK = settingValue.toInt();
-      }else if(settingName == "PTTmodeDIGI"){
-        PTTmodeDIGI = settingValue.toInt();
-      }else if(settingName == "SERBAUD2"){
-        SERBAUD2 = settingValue.toInt();
       }else if(settingName == "BAND_DECODER_IN"){
-        BAND_DECODER_IN = settingValue.toInt();
-      }else if(settingName == "BAND_DECODER_WATCHDOG"){
-        BAND_DECODER_WATCHDOG = settingValue.toInt();
-      }else if(settingName == "BAND_DECODER_REQUEST"){
-        BAND_DECODER_REQUEST = settingValue.toInt();
+        BAND_DECODER_IN = (int)settingValue.toInt();
+      }else if(settingName == "SERBAUD2"){
+        SERBAUD2 = (unsigned long)settingValue.toInt();
       }else if(settingName == "CIV_ADRESS"){
-        CIV_ADRESS = settingValue.toInt();
-        lcd.print(F("."));
+        // CIV_ADRESS = settingValue.toInt();
+        unsigned char buf[3];
+        settingValue.toCharArray(buf, 3);
+        CIV_ADRESS = hexToDecBy4bit(buf[0])<<4 | hexToDecBy4bit(buf[1]);
+      }else if(settingName == "GpsTime"){
+        GpsTime = (bool)settingValue.toInt();
+      }else if(settingName == "mqttBroker0"){
+        // byte ip0 = (int)settingValue.toInt();
+        mqttBroker[0] = (int)settingValue.toInt();
+      }else if(settingName == "mqttBroker1"){
+        mqttBroker[1] = (int)settingValue.toInt();
+      }else if(settingName == "mqttBroker2"){
+        mqttBroker[2] = (int)settingValue.toInt();
+      }else if(settingName == "mqttBroker3"){
+        mqttBroker[3] = (int)settingValue.toInt();
+        MqttServer = mqttBroker;
+      }else if(settingName == "MODE_AFTER_POWER_UP"){
+        MODE_AFTER_POWER_UP = (int)settingValue.toInt();
+      }else if(settingName == "MENU_AFTER_POWER_UP"){
+        MENU_AFTER_POWER_UP = (int)settingValue.toInt();
       }
+
+      // byte ip0 = getPartOfStringBySeperatorAndAppearance(deviceIp, '.', 0).toInt();
+      // byte ip1 = getPartOfStringBySeperatorAndAppearance(deviceIp, '.', 1).toInt();
+      // byte ip2 = getPartOfStringBySeperatorAndAppearance(deviceIp, '.', 2).toInt();
+      // byte ip3 = getPartOfStringBySeperatorAndAppearance(deviceIp, '.', 3).toInt();
+      // IPAddress ip(ip0, ip1, ip2, ip3);
+      // String getPartOfStringBySeperatorAndAppearance(String data, char separator, int index)
+      // {
+      //   int stringData = 0;
+      //   String dataPart = "";
+      //   for(int i = 0; i<data.length(); i++)
+      //   {
+      //     if(data[i]==separator)
+      //       stringData++;
+      //     else if(stringData==index)
+      //       dataPart.concat(data[i]);
+      //     else if(stringData>index)
+      //     {
+      //       return dataPart;
+      //       break;
+      //     }
+      //   }
+      //   return dataPart;
+      // }
+
+
 			// else if(settingName == "ajaxUrl")
 			// 	ajaxUrl = settingValue;
 			// else if(settingName == "deviceIp")
@@ -2619,7 +2719,7 @@ void readSDSettings(){
 			settingName = "";
 			settingValue = "";
 		}
-	}
+	} // end while
 	myFile.close();
   SetVariables();   //  re-initialize variables
  }else{
@@ -2627,15 +2727,25 @@ void readSDSettings(){
 	//Serial.println("error opening settings.txt");
  }
  }
+
  //-------------------------------------------------------------------------------------------------------
   void SetVariables(){
+    Serial2.end();
+    delay(50),
+    Serial2.begin(SERBAUD2);
     ActualMode = MODE_AFTER_POWER_UP;     //  Mode
     ActualMenu = MENU_AFTER_POWER_UP;     //  Menu
     PreviousMenu = MENU_AFTER_POWER_UP;     //  previous Menu
     YOUR_CALL.toCharArray(MenuTree[0], 10);
+             // 0 reserve for incoming UDP string
+      FSKmemory[1]= {" cq de "+YOUR_CALL+" "+YOUR_CALL+" k "};  // Memory 0 button
+      FSKmemory[2]= {" "+YOUR_CALL+" "};                        // Memory 1 button
+      FSKmemory[3]= {" 599 15 "};                               // Memory 2 button
+      FSKmemory[4]= {" CQ "+YOUR_CALL+" "+YOUR_CALL+" "};       // Memory CW Left paddle
+      FSKmemory[5]= {" "+YOUR_CALL+" "};                        // Memory CW Right paddle
   }
 //-------------------------------------------------------------------------------------------------------
-void printDirectory(File dir, int numTabs) {
+/*void printDirectory(File dir, int numTabs) {
     while (true) {
 
       File entry =  dir.openNextFile();
@@ -2652,94 +2762,130 @@ void printDirectory(File dir, int numTabs) {
         // printDirectory(entry, numTabs + 1);
       } else {
         // files have sizes, directories do not
-        Serial.print("\t\t");
+        Serial.print(F("\t\t"));
         Serial.println(entry.size(), DEC);
       }
       entry.close();
     }
-  }
+  }*/
 //-------------------------------------------------------------------------------------------------------
 void AfterMQTTconnect(){
-  if(ETHERNET_MODULE == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
-  //    if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {          // public IP addres to MQTT
+  if(EnableEthernet == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1 && EthLinkStatus==1){
+  //    if (mqttClient.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {          // public IP addres to MQTT
         IPAddress IPlocalAddr = Ethernet.localIP();                           // get
         String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
         IPlocalAddrString.toCharArray( mqttTX, 50 );                          // to array
         String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/ip";
         path2.toCharArray( mqttPath, 20 );
-          client.publish(mqttPath, mqttTX, true);
+          mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/pttlead";
         path2.toCharArray( mqttPath, 20 );
         String(PTTlead).toCharArray( mqttTX, 50 );                          // to array
-          client.publish(mqttPath, mqttTX, true);
+          mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/ptttail";
         path2.toCharArray( mqttPath, 20 );
         String(PTTtail).toCharArray( mqttTX, 50 );                          // to array
-          client.publish(mqttPath, mqttTX, true);
+          mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/seqlead";
         path2.toCharArray( mqttPath, 20 );
         String(SEQUENCERlead).toCharArray( mqttTX, 50 );                          // to array
-          client.publish(mqttPath, mqttTX, true);
+          mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/seqtail";
         path2.toCharArray( mqttPath, 20 );
         String(SEQUENCERtail).toCharArray( mqttTX, 50 );                          // to array
-          client.publish(mqttPath, mqttTX, true);
+          mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/palead";
         path2.toCharArray( mqttPath, 20 );
         String(PAlead).toCharArray( mqttTX, 50 );                          // to array
-          client.publish(mqttPath, mqttTX, true);
+          mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/patail";
         path2.toCharArray( mqttPath, 20 );
         String(PAtail).toCharArray( mqttTX, 50 );                          // to array
-          client.publish(mqttPath, mqttTX, true);
+          mqttClient.publish(mqttPath, mqttTX, true);
   }
 }
 //-------------------------------------------------------------------------------------------------------
-void OpenInterfaceInterlock(){      // <-------------- move to hw INTERRUPT?
-      if (digitalRead(INTERLOCK) == ptt_interlock_active && InterlockFromUdpActive == LOW) {   // if change and not active from UDP
-        ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
-        if(ptt_interlock_active == 1  && SequencerLevel != 0){
-          ptt_low(0);
-        }
-        MqttPub("interlock", 0, ptt_interlock_active);
-        LcdNeedRefresh = 1;
+void OpenInterfaceInterlock(){
+
+  if(InterlockEnable==true){   // interlock
+    if (digitalRead(INTERLOCK) == ptt_interlock_active && InterlockFromUdpActive == LOW) {   // if change and not active from UDP
+      ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
+      if(ptt_interlock_active == 1  && SequencerLevel != 0){
+        ptt_low(0);
+        send_buffer_bytes=0;
+      }
+      MqttPubString("interlock", String(ptt_interlock_active), false);
+      Debugging("Interlock-" + String(ptt_interlock_active) + " " + String(millis()-DebuggingTimer));
+      LcdNeedRefresh = 1;
     }
+
+  }else{        // Ptt in
+    if (digitalRead(INTERLOCK) == LOW) {
+      digitalWrite (SEQUENCER, HIGH);  // SEQUENCER
+      digitalWrite (PTTPA, HIGH);      // PTT-PA
+      PttInStatus=true;
+      ptt_high(PTTmodeCW);
+      Debugging("PTTin-1 "+String(millis()-DebuggingTimer));
+    }else{
+      PttInStatus=false;
+      ptt_low(PTTmodeCW);
+      Debugging("PTTin-0 "+String(millis()-DebuggingTimer));
+    }
+  }
+
 }
 //-------------------------------------------------------------------------------------------------------
+// 1 = pin8 at DB25 | 2 = pin20 at DB25 | 3 = pin22 at DB25
 void ptt_high(int PTToutput){
   if(ptt_interlock_active == 0){
     if(SequencerLevel == 0){
       digitalWrite (SEQUENCER, HIGH);  // SEQUENCER
-      delay(SEQUENCERlead);
+      MqttPubString("sequencer", "1", false);
+      if(DebuggingOutput!=0){
+        DebuggingTimer=millis();
+      }
+      Debugging("PTTseq-H "+String(millis()-DebuggingTimer));
+      if(PttInStatus==false){
+        delay(SEQUENCERlead);
+      }
       SequencerLevel = 5;
     }
     if(SequencerLevel == 5){
       digitalWrite (PTTPA, HIGH);      // PTT-PA
       SendBroadcastUdpPTT(1);
-      MqttPub("ptt", 0, 1);
-      delay(PAlead);
+      MqttPubString("ptt_pa", "1", false);
+      Debugging("PTTpa-H "+String(millis()-DebuggingTimer));
+      if(PttInStatus==false){
+        delay(PAlead);
+      }
       SequencerLevel = 4;
     }
-    if(SequencerLevel == 4){
+    if(SequencerLevel == 4 && PttInStatus == false){
       switch (PTToutput) {
         case 1:{ // PTT-1
           digitalWrite (PTT1, HIGH);
+          MqttPubString("ptt1", "1", false);
+          Debugging("PTT1-H "+String(millis()-DebuggingTimer));
           SequencerLevel = 1;
         break;
         }
         case 2:{ // PTT-2
           digitalWrite (PTT2, HIGH);
+          MqttPubString("ptt2", "1", false);
+          Debugging("PTT2-H "+String(millis()-DebuggingTimer));
           SequencerLevel = 2;
         break;
         }
         case 3:{ // PTT-3
           digitalWrite (PTT3, HIGH);
+          MqttPubString("ptt3", "1", false);
+          Debugging("PTT3-H "+String(millis()-DebuggingTimer));
           SequencerLevel = 3;
         break;
         }
@@ -2779,32 +2925,52 @@ void ptt_low(int PTToutput){
     break;
     }
   }
+  Debugging("PTT"+String(PTToutput)+"-to L "+String(millis()-DebuggingTimer)+" "+String(send_buffer_bytes));
 }
 //-------------------------------------------------------------------------------------------------------
+/*
+  0   _________________________   0
+_____|                         |_____   Sequencer
+        5  _______________   5
+__________|               |__________   PTT-PA
+             4  _____   4
+_______________| 321 |_______________   PTT-1-2-3
+
+PTT_tail_timeout[PTT][timestep|longer] = { // [lines][rows]
+
+*/
 void check_ptt_low(){
-  if(SequencerLevel != 0){ // if Sequencer on
+  if(SequencerLevel != 0 && PttInStatus==false){ // if Sequencer on
     switch (SequencerLevel) {
       case 1:{ // PTT-1
-        if (millis() - PTT_tail_timeout[0][0] > (PTT_tail_timeout[0][1])){
-            digitalWrite (PTT1, LOW);
+        if (millis() - PTT_tail_timeout[0][0] > PTT_tail_timeout[0][1] && send_buffer_bytes==0){
+          digitalWrite (PTT1, LOW);
           SequencerLevel = 4;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
+          if(PttInStatus!=true ){
+            MqttPubString("ptt1", "0", false);
+            Debugging("PTT1-L "+String(millis()-DebuggingTimer));
+          }
         }
       break;
       }
       case 2:{ // PTT-2
-        if (millis() - PTT_tail_timeout[1][0] > (PTT_tail_timeout[1][1])){
+        if (millis() - PTT_tail_timeout[1][0] > (PTT_tail_timeout[1][1]) && send_buffer_bytes==0){
             digitalWrite (PTT2, LOW);
           SequencerLevel = 4;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
+          MqttPubString("ptt2", "0", false);
+          Debugging("PTT2-L "+String(millis()-DebuggingTimer));
         }
       break;
       }
       case 3:{ // PTT-3
-        if (millis() - PTT_tail_timeout[2][0] > (PTT_tail_timeout[2][1])){
+        if (millis() - PTT_tail_timeout[2][0] > (PTT_tail_timeout[2][1]) && send_buffer_bytes==0){
             digitalWrite (PTT3, LOW);
           SequencerLevel = 4;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
+          MqttPubString("ptt3", "0", false);
+          Debugging("PT3-L "+String(millis()-DebuggingTimer));
         }
       break;
       }
@@ -2813,7 +2979,9 @@ void check_ptt_low(){
           digitalWrite (PTTPA, LOW);
           SequencerLevel = 5;
           PTT_tail_timeout[4][0] = millis(); // set time mark PA
-        }
+          MqttPubString("ptt_pa", "0", false);
+          Debugging("PTTpa-L "+String(millis()-DebuggingTimer));
+      }
       break;
       }
       case 5:{ // SEQUENCER
@@ -2822,20 +2990,26 @@ void check_ptt_low(){
           SequencerLevel = 0;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
           SendBroadcastUdpPTT(0);
-          MqttPub("ptt", 0, 0);
+          MqttPubString("sequencer", "0", false);
+          Debugging("PTTseq-L "+String(millis()-DebuggingTimer));
         }
       break;
       }
     }
   }
+  if(SequencerLevel == 1 || SequencerLevel == 2 || SequencerLevel == 3){  // if PTT continue ON
+    PTT_tail_timeout[0][0] = millis(); // set time mark PTT 1
+    PTT_tail_timeout[1][0] = millis(); // set time mark PTT 2
+    PTT_tail_timeout[2][0] = millis(); // set time mark PTT 3
+  }
 }
 //-------------------------------------------------------------------------------------------------------
 // If BAND change, send query packet to Remote IP switch
 void RemoteSwQuery(){
-  if(ETHERNET_MODULE==1 && RemoteSwitch == 1){
+  if(EnableEthernet==1 && RemoteSwitch == 1 && EthLinkStatus==1){
     if(BAND != BandDecoderChange){    // if band change, send query udp packet
       if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4]!=0){       // if detect IP Switch for this band
-        InterruptON(0,0,0); // keyb, enc, gps
+        InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
         RemoteSwIP = DetectedRemoteSw[BandToRemoteSwitchID[BAND]];
         RemoteSwPort = DetectedRemoteSw[BandToRemoteSwitchID[BAND]][4];
         // UDP send to Switch
@@ -2850,7 +3024,7 @@ void RemoteSwQuery(){
           RemoteSwLatency[0] = millis(); // set START time mark UDP command latency
         UdpCommand.endPacket();
         RemoteSwLatencyAnsw = 0;   // send command, wait to answer
-        InterruptON(1,1,1); // keyb, enc, gps
+        InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
       }else{      // if IP sw n/a on this band, clear LED keyboard
         digitalWrite(ShiftOutLatchPin, LOW);  // ready for receive data
         // shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, B00000000);    // bankC
@@ -2885,24 +3059,531 @@ void TxCwAtUTC(){
     tmp++;
   }
   ptt_low(PTTmodeCW);
-  if(DebuggingOutput!=0){
-    Debugging(String(packetBuffer));
-    Debuggingln();
-    Debugging("TxTimeMillis ");
-    Debugging(String(TxTimeMillis, HEX));
-    Debuggingln();
-    Debugging("B4TxTimer ");
-    Debugging(String(B4TxTimer));
-    Debuggingln();
+  Debugging(String(packetBuffer)+" | TxTimeMillis "+String(TxTimeMillis, HEX)+" | B4TxTimer "+String(B4TxTimer));
+}
+
+//-------------------------------------------------------------------------------------------------------
+void EthernetCheck(){
+  if(millis()-EthLinkStatusTimer[0]>EthLinkStatusTimer[1] && EnableEthernet==1){
+    if ((Ethernet.linkStatus() == Unknown || Ethernet.linkStatus() == LinkOFF) && EthLinkStatus==1) {
+      EthLinkStatus=0;
+      Debugging("Ethernet DISCONNECTED");
+    }else if (Ethernet.linkStatus() == LinkON && EthLinkStatus==0) {
+      EthLinkStatus=1;
+      Debugging("Ethernet CONNECTED");
+      lcd.clear();
+      lcd.setCursor(1, 0);
+      lcd.print(F("Net-ID: "));
+      lcd.print(NET_ID, HEX);
+      lcd.setCursor(1, 1);
+      lcd.print(F("[DHCP-"));
+      if(EnableDHCP==1){
+          lcd.print(F("ON]..."));
+          Ethernet.begin(mac);
+          IPAddress CheckIP = Ethernet.localIP();
+          if( CheckIP[0]==0 && CheckIP[1]==0 && CheckIP[2]==0 && CheckIP[3]==0 ){
+            lcd.clear();
+            lcd.setCursor(1, 0);
+            lcd.print(F("DHCP FAIL"));
+            lcd.setCursor(1, 1);
+            lcd.print(F("please restart"));
+            while(1) {
+              // infinite loop
+            }
+          }
+      }else{
+        lcd.print(F("OFF]"));
+        Ethernet.begin(mac, ip, myDns, gateway, subnet);
+      }
+
+        delay(2000);
+        lcd.clear();
+        lcd.setCursor(1, 0);
+        lcd.print(F("IP address:"));
+        lcd.setCursor(1, 1);
+        lcd.print(Ethernet.localIP());
+        delay(2500);
+        lcd.clear();
+
+      UdpCommand.begin(UdpCommandPort);   // UDP
+      UdpRtty.begin(UdpRttyPort);
+      webServer.begin();                     // Web
+      // TelnetServer.begin();
+      // TxUDP(ThisDevice, RemoteDevice, 'b', 'r', 'o');
+    } // end ETH-ON
+    EthLinkStatusTimer[0]=millis();
+  } // end Timer
+}
+
+//-------------------------------------------------------------------------------------------------------
+void Mqtt(){
+  if (MQTT_ENABLE == true && EthLinkStatus==1){
+    InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
+    if (!mqttClient.connected()) {
+      long now = millis();
+      if (now - lastMqttReconnectAttempt > 5000) {
+        lastMqttReconnectAttempt = now;
+        // Attempt to reconnect
+        if (mqttReconnect()) {
+          lastMqttReconnectAttempt = 0;
+        }
+      }
+    } else {
+      // Client connected
+      mqttClient.loop();
+    }
+    InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
   }
 }
 
 //-------------------------------------------------------------------------------------------------------
+/*
+if (MQTT_ENABLE == true && MQTT_LOGIN == true){
+  if (mqttClient.connect(mac, MQTT_USER, MQTT_PASS)){
+    MqttConnected = true;
+    // AfterMQTTconnect();
+    IPAddress IPlocalAddr = Ethernet.localIP();                           // get
+    String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
+    MqttPubString("IP", IPlocalAddrString, true);
+    lcd.clear();
+    lcd.setCursor(1, 0);
+    lcd.print(F("MQTT connected"));
+    lcd.setCursor(1, 1);
+    lcd.print(MqttServer);
+    delay(2500);
+    lcd.clear();
+  }else{
+    MqttConnected = false;
+    lcd.clear();
+    lcd.setCursor(1, 0);
+    lcd.print(F("MQTT not"));
+    lcd.setCursor(1, 1);
+    lcd.print(F("connect"));
+    delay(1500);
+    lcd.clear();
+  }
+}else if(MQTT_ENABLE == true){
+  // if (mqttClient.connect("arduinoClient")){
+  if (){
+  }else{
+    MqttConnected = false;
+    lcd.clear();
+    lcd.setCursor(1, 0);
+    lcd.print(F("MQTT not"));
+    lcd.setCursor(1, 1);
+    lcd.print(F("connect"));
+    delay(1500);
+    lcd.clear();
+  }
+}
+*/
+
+bool mqttReconnect() {
+  if (mqttClient.connect(mac)) {
+    IPAddress IPlocalAddr = Ethernet.localIP();                           // get
+    String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
+    MqttPubString("IP", IPlocalAddrString, true);
+    lcd.clear();
+    lcd.setCursor(1, 0);
+    lcd.print(F("MQTT connected"));
+    lcd.setCursor(1, 1);
+    lcd.print(MqttServer);
+    delay(2500);
+    lcd.clear();
+
+    // resubscribe
+    if(NET_ID!=MASTER_NET_ID){
+
+      // CW
+      String topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/cw";
+      const char *cstr = topic.c_str();
+      if(mqttClient.subscribe(cstr)==true){
+        lcd.clear();
+        lcd.setCursor(1, 0);
+        lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(cstr);
+        Debugging("MQTT subscribe to "+String(cstr));
+        delay(500);
+        // lcd.clear();
+      }
+
+      // mode
+      topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/mode";
+      const char *cstr1 = topic.c_str();
+      if(mqttClient.subscribe(cstr1)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(cstr1);
+        Debugging("MQTT subscribe to "+String(cstr1));
+        delay(500);
+        // lcd.clear();
+      }
+
+      // Hz
+      topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/hz";
+      const char *cstr2 = topic.c_str();
+      if(mqttClient.subscribe(cstr2)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(cstr2);
+        Debugging("MQTT subscribe to "+String(cstr2));
+        delay(500);
+        // lcd.clear();
+      }
+
+      // Hz
+      topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/wpm";
+      const char *cstr4 = topic.c_str();
+      if(mqttClient.subscribe(cstr4)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(cstr4);
+        Debugging("MQTT subscribe to "+String(cstr4));
+        delay(500);
+        // lcd.clear();
+      }
+
+      // set-debug
+      topic = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/set-debug";
+      const char *cstr3 = topic.c_str();
+      if(mqttClient.subscribe(cstr3)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(cstr3);
+        Debugging("MQTT subscribe to "+String(cstr2));
+        delay(500);
+        lcd.clear();
+      }
+
+    }
+  }
+  return mqttClient.connected();
+}
+
+//------------------------------------------------------------------------------------
+void MqttRx(char *topic, byte *payload, unsigned int length) {
+
+  String CheckTopicBase; // = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/";
+  // const char *cstr = CheckTopic.c_str();
+  // if (strcmp(topic, cstr)==0){
+  byte* p = (byte*)malloc(length);
+
+  // CW/rtty    0
+  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/cw";
+  if ( CheckTopicBase.equals( String(topic) )){
+    if(ActualMode==3 || ActualMode==4){               // if mode FSK
+      memcpy(p,payload,length);
+      FSKmemory[0] = p;
+      FSKmemoryTX(0);
+    }
+    if(ActualMode==0 || ActualMode==1){               // if mode CW
+      // Copy the payload to the new buffer
+      memcpy(p,payload,length);
+      ptt_high(PTTmodeCW);
+      // Debugging("Local CW transmit (rx buffer size "+String(length)+")");
+      for (int i = 0; i < length; i++) {
+        if(p[i]!=0){
+          send_char(toUpperCase(p[i]),KEYER_NORMAL);
+          // Debugging(String(i)+"-"+p[i]);
+        }
+      }
+      ptt_low(PTTmodeCW);
+    }
+  }
+
+  // mode   0
+  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/mode";
+  if ( CheckTopicBase.equals( String(topic) )){
+    // Copy the payload to the new buffer
+    memcpy(p,payload,length);
+      ActualMode=p[0]-48;
+      SwitchHardware(ActualMode);
+      MqttPubString("mode", String(ActualMode), false);
+      Debugging("Mode:"+String(ActualMode));
+    // KENWOOD
+    if(BAND_DECODER_IN==2){
+       Serial2.print("MD" + String(KenwoodCatModeSetReverse[ActualMode]) + ";");    // set mode
+       Serial2.flush();
+    }
+  }
+
+  // Hz   0
+  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/hz";
+  if ( CheckTopicBase.equals( String(topic) )){
+    // Copy the payload to the new buffer
+    memcpy(p,payload,length);
+    freq = 0;
+    unsigned long exp = 1;
+    for (int i = length-1; i >=0 ; i--) {
+      freq = freq + (p[i]-48)*exp;
+      exp = exp*10;
+    }
+    // KENWOOD
+    if(BAND_DECODER_IN==2){
+        String freqPCtx = String(freq);        // to string
+        while (freqPCtx.length() < 11) {       // leding zeros
+            freqPCtx = 0 + freqPCtx;
+        }
+       Serial2.print("FA" + freqPCtx + ";");    // sets both VFO
+       Serial2.print("FB" + freqPCtx + ";");
+    //          Serial2.print("FA" + freqPCtx + ";");    // first packet not read every time
+       Serial2.flush();
+       // freqPrev2 = freq;
+    }
+    FreqToBandRules(freq);
+    bandSET();                                              // set outputs relay
+  }
+
+  // wpm   0
+  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/wpm";
+  if ( CheckTopicBase.equals( String(topic) )){
+    // Copy the payload to the new buffer
+    memcpy(p,payload,length);
+    int wpm = 0;
+    wpm = wpm + (p[0]-48)*10;
+    wpm = wpm + (p[1]-48)*1;
+    speed_set(wpm);
+  }
+
+  // Debug   net-id
+  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/set-debug";
+  if ( CheckTopicBase.equals( String(topic) )){
+    // Copy the payload to the new buffer
+    memcpy(p,payload,length);
+    // for (i = 0; i < length; i++) {
+      // if(p[0]!=0){
+        DebuggingOutput=p[0]-48;
+        Debugging("DebuggingOutput:"+p[0]);
+      // }
+    // }
+  }
+
+} // MqttRx END
+
+  // copy payload to a static string
+  // int MAX_MSG_LEN;
+  // static char message[MAX_MSG_LEN+1];
+  // if (length > MAX_MSG_LEN) {
+  //   length = MAX_MSG_LEN;
+  // }
+  // strncpy(message, (char *)payload, length);
+  // message[length] = '\0';
+
+  // Serial.printf("topic %s, message received: %s\n", topic, message);
+
+  // decode message
+  // if (strcmp(message, "off") == 0) {
+  //   setLedState(false);
+  // } else if (strcmp(message, "on") == 0) {
+  //   setLedState(true);
+  // }
+
+//------------------------------------------------------------------------------------
+void mqtt_wall(){
+  if(EnableEthernet==1 && MQTT_ENABLE==1 && EthLinkStatus==1){
+    InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
+    // listen for incoming clients
+    EthernetClient webClient = webServer.available();  // try to get webClient
+    if (webClient) {
+
+      Debugging("Web new client");
+      memset(linebuf,0,sizeof(linebuf));
+      charcount=0;
+      // an http request ends with a blank line
+      boolean currentLineIsBlank = true;
+      while (webClient.connected()) {
+        if (webClient.available()) {
+          char c = webClient.read();
+          Debugging(c);
+          //read char by char HTTP request
+          linebuf[charcount]=c;
+          if (charcount<sizeof(linebuf)-1) charcount++;
+          // if you've gotten to the end of the line (received a newline
+          // character) and the line is blank, the http request has ended,
+          // so you can send a reply
+          if (c == '\n' && currentLineIsBlank) {
+            // send a standard http response header
+            webClient.println(F("HTTP/1.1 200 OK"));
+            webClient.println(F("Content-Type: text/html"));
+            webClient.println(F("Connection: close"));  // the connection will be closed after completion of the response
+            webClient.println();
+            webClient.println(F("  <!DOCTYPE html>"));
+            webClient.println(F("  <html>"));
+            webClient.println(F("      <head>"));
+            webClient.println(F("          <meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\"/>"));
+            webClient.println(F("          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"));
+            // webClient.println(F("          <meta http-equiv=\"refresh\" content=\"10\">"));
+            webClient.println(F("          <link rel=\"stylesheet\" type=\"text/css\" href=\"https://remoteqth.com/mqtt-wall/style.css\">"));
+            // TITLE
+            webClient.print(F("           <title>Open Interface III"));
+            // webClient.print(BOARD_ID);
+            // webClient.print(F("/"));
+            // webClient.print(DEVICE_ID);
+            webClient.println(F("</title>"));
+            // END TITLE
+            webClient.println(F("          <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"style/apple-touch-icon.png\">"));
+            webClient.println(F("          <link rel=\"mask-icon\" href=\"style/safari-pinned-tab.svg\" color=\"#5bbad5\">"));
+            webClient.println(F("          <link rel=\"icon\" type=\"image/png\" href=\"style/favicon-32x32.png\" sizes=\"32x32\">"));
+            webClient.println(F("          <link rel=\"icon\" type=\"image/png\" href=\"style/favicon-16x16.png\" sizes=\"16x16\">"));
+            webClient.println(F("          <link rel=\"manifest\" href=\"style/manifest.json\">"));
+            webClient.println(F("          <link rel=\"shortcut icon\" href=\"style/favicon.ico\">"));
+            webClient.println(F("          <meta name='apple-mobile-web-app-capable' content='yes'>"));
+            webClient.println(F("          <meta name='mobile-web-app-capable' content='yes'>"));
+            webClient.println(F("          <meta name=\"msapplication-config\" content=\"style/browserconfig.xml\">"));
+            webClient.println(F("          <meta name=\"theme-color\" content=\"#ffffff\">"));
+            webClient.println(F("          <script type=\"text/javascript\">"));
+            webClient.println(F("          var config = {"));
+            webClient.println(F("              server: {"));
+            webClient.print(F("                  uri: \"ws://"));
+            webClient.print(MqttServer[0]);
+            webClient.print(F("."));
+            webClient.print(MqttServer[1]);
+            webClient.print(F("."));
+            webClient.print(MqttServer[2]);
+            webClient.print(F("."));
+            webClient.print(MqttServer[3]);
+            webClient.println(F(":1884/\","));
+            webClient.println(F("              },"));
+            // TOPIC
+            webClient.print(F("              defaultTopic: \""));
+            webClient.print(YOUR_CALL);
+            webClient.print(F("/OI3/"));
+            webClient.print(String(NET_ID, HEX));
+            webClient.println(F("/#\","));
+            // END TOPIC
+            webClient.println(F("              showCounter: true,"));
+            webClient.println(F("              alphabeticalSort: true,"));
+            webClient.println(F("              qos: 0"));
+            webClient.println(F("          };"));
+            webClient.println(F("          </script>"));
+            // END TOPIC
+            webClient.println(F("      </head>"));
+            webClient.println(F("      <body>"));
+            webClient.print(F("          <div id=\"frame\" "));
+            webClient.println(F(">"));
+            webClient.println(F("              <div id=\"footer\">"));
+            webClient.println(F("                  <p class=\"status\" style=\"font-size: 150%;\">"));
+            // STATUS
+            webClient.print(F("Uptime: "));
+            webClient.print(millis()/1000);
+            webClient.print(F(" sec | version: "));
+            webClient.println(REV);
+            webClient.print(F(" | eth mac: "));
+            for (int i = 0; i < 6; i++) {
+              webClient.print(mac[i], HEX);
+              webClient.print(F(":"));
+            }
+            webClient.println();
+
+            webClient.print(F(" | dhcp: "));
+            if(EnableDHCP==1){
+              webClient.print(F("ON"));
+            }else{
+              webClient.print(F("OFF"));
+            }
+            webClient.print(F(" | ip: "));
+            webClient.println(Ethernet.localIP());
+            // webClient.print(F(" | utc from ntp: "));
+            // webClient.println(F("timeClient.getFormattedTime()"));
+            // webClient.println(F("<br>MQTT subscribe command: $ mosquitto_sub -v -h mqttstage.prusa -t prusa-debug/prusafil/extrusionline/+/#"));
+            webClient.print(F(" | Broker ip: "));
+            webClient.print(MqttServer[0]);
+            webClient.print(F("."));
+            webClient.print(MqttServer[1]);
+            webClient.print(F("."));
+            webClient.print(MqttServer[2]);
+            webClient.print(F("."));
+            webClient.print(MqttServer[3]);
+            webClient.print(F(":"));
+            webClient.print(MQTT_PORT);
+            webClient.print(F(" | Debug <span style=\"color:black; font-weight: bold;\">"));
+            switch (DebuggingOutput){
+              case 0:
+                webClient.print(F("OFF"));
+              break;
+              case 1:
+                webClient.print(F("Serial-1(KEY)"));
+              break;
+              case 2:
+                webClient.print(F("Serial-2(CAT)"));
+              break;
+              case 3:
+                webClient.print(F("UDP_broadcast"));
+              break;
+              case 4:
+                webClient.print(F("MQTT"));
+              break;
+            }
+            // END STATUS
+            webClient.println(F("              </span></p>"));
+            webClient.println(F("              </div>"));
+            webClient.println(F("              <div id=\"header\">"));
+            webClient.println(F("                  <div id=\"topic-box\">"));
+            webClient.println(F("                      <input type=\"text\" id=\"topic\" value=\"\" title=\"Topic to subscribe\">"));
+            webClient.println(F("                  </div>"));
+            webClient.println(F("              </div>"));
+            webClient.println(F("              <div id=\"toast\"></div>"));
+            webClient.println(F("              <section class=\"messages\"></section>"));
+            webClient.println(F("              <div id=\"footer\">"));
+            webClient.println(F("                  <p class=\"status\">"));
+            webClient.println(F("                      Client <code id=\"status-client\" title=\"Client ID\">?</code> is "));
+            webClient.println(F("                      <code id=\"status-state\" class=\"connecting\"><em>&bull;</em> <span>connecting...</span></code> to "));
+            webClient.println(F("                      <code id=\"status-host\">?</code>"));
+            webClient.println(F("                      <em>via</em> MQTT Wall 0.3.0 (<a href=\"https://github.com/bastlirna/mqtt-wall\">github</a>)"));
+            webClient.println(F("                      | <a href=\"https://remoteqth.com/wiki/index.php?page=Open+interface+III\" target=\"_blank\">Open Interface Wiki</a>."));
+            webClient.println(F("                  </p>"));
+            webClient.println(F("              </div>"));
+            webClient.println(F("          </div>"));
+            webClient.println(F("          <script type=\"text/javascript\" src=\"http://code.jquery.com/jquery-2.1.4.min.js\"></script>"));
+            webClient.println(F("          <script type=\"text/javascript\" src=\"http://code.jquery.com/color/jquery.color-2.1.2.min.js\"></script>"));
+            webClient.println(F("          <script type=\"text/javascript\" src=\"https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js\"></script>"));
+            webClient.println(F("          <script type=\"text/javascript\" src=\"https://remoteqth.com/mqtt-wall/wall.js\"></script>"));
+            webClient.println(F("      </body>"));
+            webClient.println(F("  </html>"));
+
+            break;
+          }
+          if (c == '\n') {
+            // you're starting a new line
+            currentLineIsBlank = true;
+            // if (strstr(linebuf,"GET /h0 ") > 0){digitalWrite(GPIOS[0], HIGH);}else if (strstr(linebuf,"GET /l0 ") > 0){digitalWrite(GPIOS[0], LOW);}
+            // else if (strstr(linebuf,"GET /h1 ") > 0){digitalWrite(GPIOS[1], HIGH);}else if (strstr(linebuf,"GET /l1 ") > 0){digitalWrite(GPIOS[1], LOW);}
+
+            // you're starting a new line
+            currentLineIsBlank = true;
+            memset(linebuf,0,sizeof(linebuf));
+            charcount=0;
+          } else if (c != '\r') {
+            // you've gotten a character on the current line
+            currentLineIsBlank = false;
+          }
+        }
+      }
+      // give the web browser time to receive the data
+      delay(1);
+
+      // close the connection:
+      webClient.stop();
+      Debugging("WIFI client disconnected");
+    }
+    InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
+  }
+}
+//-------------------------------------------------------------------------------------------------------
 // Incoming UDP commands
 void IncomingUDP(){
-  if(ETHERNET_MODULE==1){
+  if(EnableEthernet==1 && EthLinkStatus==1){
     // detachInterrupt because this interrupt worked with ethernet also
-    InterruptON(0,0,0); // keyb, enc, gps
+    InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
 
     //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
@@ -2911,11 +3592,7 @@ void IncomingUDP(){
     //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     UDPpacketSize = UdpRtty.parsePacket();    // if there's data available, read a packet
     if (UDPpacketSize){
-      if(DebuggingOutput!=0){
-        Debuggingln();
-        Debugging("Incoming UDP CW/RTTY string on port 89");
-        Debuggingln();
-      }
+      Debugging("Incoming UDP CW/RTTY string on port 89");
       if(ActualMode==3 || ActualMode==4){               // if mode FSK
         UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
         FSKmemory[0] = packetBuffer;
@@ -2927,7 +3604,7 @@ void IncomingUDP(){
         // CW send to SOMQ orchestra (proxy)
         // RX string -> TX w:#######:[msg];
         if(GpsTime==1 && (ReadGpsData[42]=='1' || ReadGpsData[42]=='2')){   // if enable SOMQ orchestra and gps quality byte ok
-          InterruptON(0,0,0); // keyb, enc, gps
+          // InterruptON(0,0,0); // keyb, enc, gps
           UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
           for (i = UDP_TX_PACKET_MAX_SIZE; i > -1 ; i--) { // move RX [msg] data (space for header)
             if(packetBuffer[i]!=NULL){
@@ -2954,10 +3631,7 @@ void IncomingUDP(){
           packetBuffer[1] = B00111010;               // :
           packetBuffer[0] = B01110111;               // w
 
-          if(DebuggingOutput!=0){
-            Debugging("SOMQ proxy");
-            Debuggingln();
-          }
+          Debugging("SOMQ proxy");
 
           // TX to QTH 1
           if(NET_ID !=1 ){
@@ -2965,21 +3639,7 @@ void IncomingUDP(){
             UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
             SO1QLatency[0] = millis(); // set START time mark UDP command latency
             UdpCommand.endPacket();
-            if(DebuggingOutput!=0){
-              Debugging("UDP send to IP1 ");
-              Debugging(String(SO1QIP[0]));
-              Debugging(".");
-              Debugging(String(SO1QIP[1]));
-              Debugging(".");
-              Debugging(String(SO1QIP[2]));
-              Debugging(".");
-              Debugging(String(SO1QIP[3]));
-              Debugging(":");
-              Debugging(String(SO1QPort));
-              Debuggingln();
-              Debugging(String(packetBuffer));   // , sizeof(packetBuffer) send buffer
-              Debuggingln();
-            }
+            Debugging("UDP send to IP1 "+String(SO1QIP[0])+"."+String(SO1QIP[1])+"."+String(SO1QIP[2])+"."+String(SO1QIP[3])+":"+String(SO1QPort)+" | "+String(packetBuffer));   // , sizeof(packetBuffer) send buffer
           }
 
           // TX to QTH 2
@@ -2988,21 +3648,7 @@ void IncomingUDP(){
             UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
             SO1QLatency[1] = millis(); // set START time mark UDP command latency
             UdpCommand.endPacket();
-            if(DebuggingOutput!=0){
-              Debugging("UDP send to IP2 ");
-              Debugging(String(SO2QIP[0]));
-              Debugging(".");
-              Debugging(String(SO2QIP[1]));
-              Debugging(".");
-              Debugging(String(SO2QIP[2]));
-              Debugging(".");
-              Debugging(String(SO2QIP[3]));
-              Debugging(":");
-              Debugging(String(SO2QPort));
-              Debuggingln();
-              Debugging(String(packetBuffer));   // , sizeof(packetBuffer) send buffer
-              Debuggingln();
-            }
+            Debugging("UDP send to IP2 "+String(SO2QIP[0])+"."+String(SO2QIP[1])+"."+String(SO2QIP[2])+"."+String(SO2QIP[3])+":"+String(SO2QPort)+" | "+String(packetBuffer));   // , sizeof(packetBuffer) send buffer
           }
 
           // TX to QTH 3
@@ -3011,21 +3657,7 @@ void IncomingUDP(){
             UdpCommand.write(packetBuffer, sizeof(packetBuffer));   // send buffer
             SO1QLatency[2] = millis(); // set START time mark UDP command latency
             UdpCommand.endPacket();
-            if(DebuggingOutput!=0){
-              Debugging("UDP send to IP3 ");
-              Debugging(String(SO3QIP[0]));
-              Debugging(".");
-              Debugging(String(SO3QIP[1]));
-              Debugging(".");
-              Debugging(String(SO3QIP[2]));
-              Debugging(".");
-              Debugging(String(SO3QIP[3]));
-              Debugging(":");
-              Debugging(String(SO3QPort));
-              Debuggingln();
-              Debugging(String(packetBuffer));   // , sizeof(packetBuffer) send buffer
-              Debuggingln();
-            }
+            Debugging("UDP send to IP3 "+String(SO3QIP[0])+"."+String(SO3QIP[1])+"."+String(SO3QIP[2])+"."+String(SO3QIP[3])+":"+String(SO3QPort)+" | "+String(packetBuffer));   // , sizeof(packetBuffer) send buffer
           }
 
           // and TX localy at UTC time -   0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
@@ -3034,16 +3666,19 @@ void IncomingUDP(){
             Debugging("TX localy ");
             TxCwAtUTC();
           }
-          InterruptON(1,1,1); // keyb, enc, gps
+          // InterruptON(1,1,1); // keyb, enc, gps
 
         //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         }else{  // CW transsmit localy
           UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
-          Debugging("Local CW transmit");
           ptt_high(PTTmodeCW);
           tmp = sizeof(packetBuffer);
+          Debugging("Local CW transmit (rx buffer size "+String(tmp)+")");
           for (i = 0; i < tmp; i++) {
-            send_char(toUpperCase(packetBuffer[i]),KEYER_NORMAL);
+            if(packetBuffer[i]!=0){
+              send_char(toUpperCase(packetBuffer[i]),KEYER_NORMAL);
+              Debugging(String(i)+"-"+String(packetBuffer[i], HEX)+" "+millis());
+            }
           }
           ptt_low(PTTmodeCW);
         }
@@ -3059,11 +3694,7 @@ void IncomingUDP(){
     UDPpacketSize = UdpCommand.parsePacket();    // if there's data available, read a packet
     if (UDPpacketSize){
       UdpCommand.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
-      if(DebuggingOutput!=0){
-        Debuggingln();
-        Debugging(String("Incoming UDP packet, port 88"));
-        Debuggingln();
-      }
+      Debugging(String("Incoming UDP packet, port 88"));
 
       //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // w:#######:[msg]; - CW transmit at UTC time
@@ -3072,43 +3703,21 @@ void IncomingUDP(){
           TxUtcTimeMillis = hexToLong(String(packetBuffer[2]) + String(packetBuffer[3]) + String(packetBuffer[4]) + String(packetBuffer[5]) + String(packetBuffer[6]) + String(packetBuffer[7]) + String(packetBuffer[8]));
           // calculate TX time in internal millis timer
           TxTimeMillis = TxUtcTimeMillis-GpsTimeMillisDiff;  // GpsTimeMillis[X] - 0-PPS millis, 1-UTC millis calculate from NMEA, 2= Synchronous difference 1-0
-          if(DebuggingOutput!=0){
-            Debugging("PacketBuffer: ");
-            Debugging(String(packetBuffer[2]) + String(packetBuffer[3]) + String(packetBuffer[4]) + String(packetBuffer[5]) + String(packetBuffer[6]) + String(packetBuffer[7]) + String(packetBuffer[8]));
-            Debuggingln();
-            Debugging("TxUtcTime: ");
-            Debugging(String(TxUtcTimeMillis, DEC));
-            Debugging(" ");
-            Debugging(String(TxUtcTimeMillis, HEX));
-            Debuggingln();
-            Debugging("TxTimeMillis: ");
-            Debugging(String(TxTimeMillis, DEC));
-            Debugging(" ");
-            Debugging(String(TxTimeMillis, HEX));
-            Debuggingln();
-            Debugging("Millis: ");
-            Debugging(String(millis(), DEC));
-            Debugging(" ");
-            Debugging(String(millis(), HEX));
-            Debuggingln();
-          }
+          Debugging("PacketBuffer: "+String(packetBuffer[2]) + String(packetBuffer[3]) + String(packetBuffer[4]) + String(packetBuffer[5]) + String(packetBuffer[6]) + String(packetBuffer[7]) + String(packetBuffer[8]));
+          Debugging("TxUtcTime: "+String(TxUtcTimeMillis, DEC)+" "+String(TxUtcTimeMillis, HEX));
+          Debugging("TxTimeMillis: "+String(TxTimeMillis, DEC)+" "+String(TxTimeMillis, HEX));
+          Debugging("Millis: "+String(millis(), DEC)+" "+String(millis(), HEX));
 
           if(TxTimeMillis>millis() && TxTimeMillis<millis()+5000){  // 5s window
-            if(DebuggingOutput!=0){
-              Debugging("TX! after ");
-              Debugging(String(TxTimeMillis-millis()));
-              Debuggingln();
-            }
+            Debugging("TX! after "+String(TxTimeMillis-millis()));
             TxCwAtUTC();
           }else if(TxTimeMillis>millis()+5000){
             // Arrived soon 5 sec window
             Debugging("...arrived more than 5s soon.");
-            Debuggingln();
           }else{
             // Arrived late
             B4TxTimer=-1;
               Debugging("...arrived late.");
-              Debuggingln();
           }
       }
 
@@ -3119,11 +3728,7 @@ void IncomingUDP(){
         RemoteSwLatencyAnsw = 1;           // answer packet received
 
         if (ACC_KEYBOARD==1 && KeyboardAnswLed==1 && HowRemoteSwitchID()<7){ // and ID < 7 (bank A/B)
-          if(DebuggingOutput!=0){
-            Debugging("Remote IP switch ID: ");
-            Debugging(String(HowRemoteSwitchID()));
-            Debuggingln();
-          }
+          Debugging("Remote IP switch ID: "+String(HowRemoteSwitchID()));
 
           // need if RX answer from band change query
           rxShiftInButton[0] = packetBuffer[2];
@@ -3154,33 +3759,13 @@ void IncomingUDP(){
         DetectedRemoteSw [hexToDecBy4bit(packetBuffer[3])] [4]=UdpCommand.remotePort();
         RemoteSwLatencyAnsw = 1;           // answer packet received
 
-        if(DebuggingOutput!=0){
-          Debuggingln();
-          Debugging("RX b:s");
-          Debugging(String(packetBuffer[3]));
-          Debugging(";");
-          Debuggingln();
-          Debugging(String(hexToDecBy4bit(packetBuffer[3]), HEX));
-          Debuggingln();
+        Debugging("RX b:s"+String(packetBuffer[3])+";");
+        Debugging(String(hexToDecBy4bit(packetBuffer[3]), HEX));
 
-          Debugging(String(packetBuffer[3], DEC));
-          Debuggingln();
-          Debugging(String((int)packetBuffer[3] - 48, DEC));
-          Debuggingln();
-          for (i = 0; i < 16; i++) {
-            Debugging(String(i));
-            Debugging("  ");
-            Debugging(String(DetectedRemoteSw [i] [0]));
-            Debugging(".");
-            Debugging(String(DetectedRemoteSw [i] [1]));
-            Debugging(".");
-            Debugging(String(DetectedRemoteSw [i] [2]));
-            Debugging(".");
-            Debugging(String(DetectedRemoteSw [i] [3]));
-            Debugging(":");
-            Debugging(String(DetectedRemoteSw [i] [4]));
-            Debuggingln();
-          }
+        Debugging(String(packetBuffer[3], DEC));
+        Debugging(String((int)packetBuffer[3] - 48, DEC));
+        for (i = 0; i < 16; i++) {
+          Debugging(String(i)+"  "+String(DetectedRemoteSw [i] [0])+"."+String(DetectedRemoteSw [i] [1])+"."+String(DetectedRemoteSw [i] [2])+"."+String(DetectedRemoteSw [i] [3])+":"+String(DetectedRemoteSw [i] [4]));
         }
       }
 
@@ -3197,7 +3782,7 @@ void IncomingUDP(){
           ptt_interlock_active = B00000;
           InterlockFromUdpActive = LOW;
         }
-        MqttPub("interlock", 0, ptt_interlock_active);
+        MqttPubString("interlock", String(ptt_interlock_active), false);
         LcdNeedRefresh = 1;
       }
 
@@ -3215,7 +3800,7 @@ void IncomingUDP(){
             ptt_interlock_active = B00000;
             InterlockFromUdpActive = LOW;
           }
-          MqttPub("interlock", 0, ptt_interlock_active);
+          MqttPubString("interlock", String(ptt_interlock_active), false);
           LcdNeedRefresh = 1;
         }
       }
@@ -3226,53 +3811,17 @@ void IncomingUDP(){
         if(NET_ID !=1 && packetBuffer[3] == 1){    // remote QTH NetID 1 store IP
           SO1QIP = UdpCommand.remoteIP();
           SO1QPort = UdpCommand.remotePort();
-          if(DebuggingOutput!=0){
-            Debugging("Store IP1 ");
-            Debugging(String(SO1QIP[0]));
-            Debugging(".");
-            Debugging(String(SO1QIP[1]));
-            Debugging(".");
-            Debugging(String(SO1QIP[2]));
-            Debugging(".");
-            Debugging(String(SO1QIP[3]));
-            Debugging(":");
-            Debugging(String(SO1QPort));
-            Debuggingln();
-          }
+          Debugging("Store IP1 "+String(SO1QIP[0])+"."+String(SO1QIP[1])+"."+String(SO1QIP[2])+"."+String(SO1QIP[3])+":"+String(SO1QPort));
         }
         if(NET_ID !=2 && packetBuffer[3] == 2){    // remote QTH NetID 2 store IP
           SO2QIP = UdpCommand.remoteIP();
           SO2QPort = UdpCommand.remotePort();
-          if(DebuggingOutput!=0){
-            Debugging("Store IP2 ");
-            Debugging(String(SO2QIP[0]));
-            Debugging(".");
-            Debugging(String(SO2QIP[1]));
-            Debugging(".");
-            Debugging(String(SO2QIP[2]));
-            Debugging(".");
-            Debugging(String(SO2QIP[3]));
-            Debugging(":");
-            Debugging(String(SO2QPort));
-            Debuggingln();
-          }
+          Debugging("Store IP2 "+String(SO2QIP[0])+"."+String(SO2QIP[1])+"."+String(SO2QIP[2])+"."+String(SO2QIP[3])+":"+String(SO2QPort));
         }
         if(NET_ID !=3 && packetBuffer[3] == 3){    // remote QTH NetID 3 store IP
           SO3QIP = UdpCommand.remoteIP();
           SO3QPort = UdpCommand.remotePort();
-          if(DebuggingOutput!=0){
-            Debugging("Store IP3 ");
-            Debugging(String(SO3QIP[0]));
-            Debugging(".");
-            Debugging(String(SO3QIP[1]));
-            Debugging(".");
-            Debugging(String(SO3QIP[2]));
-            Debugging(".");
-            Debugging(String(SO3QIP[3]));
-            Debugging(":");
-            Debugging(String(SO3QPort));
-            Debuggingln();
-          }
+          Debugging("Store IP3 "+String(SO3QIP[0])+"."+String(SO3QIP[1])+"."+String(SO3QIP[2])+"."+String(SO3QIP[3])+":"+String(SO3QPort));
         }
       }
 
@@ -3285,13 +3834,13 @@ void IncomingUDP(){
         else if(packetBuffer[4] == '3'){tmp = PTT3;}
         else{tmp = PTTPA;}
         if(packetBuffer[2] == '0'){
+            digitalWrite (tmp, LOW);
+            MqttPubString("ptt"+String((int)packetBuffer[4]), "0", false);
+        }else if(packetBuffer[2] == '1'){
           if(ptt_interlock_active == 0){  // if interlock not active
             digitalWrite (tmp, HIGH);
-              MqttPub("ptt", 0, 1);
+            MqttPubString("ptt"+String((int)packetBuffer[4]), "1", false);
           }
-        }else if(packetBuffer[2] == '1'){
-            digitalWrite (tmp, HIGH);
-              MqttPub("ptt", 0, 0);
         }
       }
 
@@ -3301,7 +3850,11 @@ void IncomingUDP(){
         tmp = packetBuffer[2]-'0';  // convert to int for compare
         if(tmp >= 0 && tmp <= 5){
           ActualMode = tmp;
-          MqttPub("mode", 0, ActualMode);
+          if(ActualMode!=ActualModePrev){
+            ActualModePrev=ActualMode;
+            MqttPubString("mode", String(ActualMode), false);
+            SwitchHardware(ActualMode);
+          }
         }
       }
 
@@ -3312,7 +3865,7 @@ void IncomingUDP(){
         // 000-NetID [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
         if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '0' && packetBuffer[8] == ';'){
           NET_ID = (hexToDecBy4bit(packetBuffer[6]) << 4) | hexToDecBy4bit(packetBuffer[7]);   // 4-bit left shift to combine them
-          MqttPub("net-id", 0, NET_ID);
+          MqttPubString("net-id", String(NET_ID), false);
         }
 
         // 001-SERBAUD2 - 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200,
@@ -3345,13 +3898,13 @@ void IncomingUDP(){
             break;
           }
           Serial2.begin(SERBAUD2);
-          MqttPub("serbaud2", 0, SERBAUD2);
+          MqttPubString("serbaud2", String(SERBAUD2), false);
         } // end SERBAUD2
 
         // 002-CIV_ADRESS
         if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '2' && packetBuffer[8] == ';'){
           CIV_ADRESS = (hexToDecBy4bit(packetBuffer[6]) << 4) | hexToDecBy4bit(packetBuffer[7]);   // 4-bit left shift to combine them
-          MqttPub("ci-v", 0, CIV_ADRESS);
+          MqttPubString("ci-v", String(CIV_ADRESS), false);
         }
 
         //  003-BAND_DECODER_IN  0=disable 1=ICOM_CIV 2=KENWOOD_PC 3=YAESU_CAT 4=YAESU_CAT_OLD 5=INPUT_SERIAL
@@ -3360,24 +3913,22 @@ void IncomingUDP(){
           if(tmp < 6){
             BAND_DECODER_IN = hexToDecBy4bit(packetBuffer[6]);
           }
-          MqttPub("band-decoder-trx", 0, BAND_DECODER_IN);
+          MqttPubString("band-decoder-trx", String(BAND_DECODER_IN), false);
         }
 
         //  004-debugging
         if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '4' && packetBuffer[7] == ';'){
           DebuggingOutput = packetBuffer[6]-'0';
-          MqttPub("DebuggingOutput", 0, DebuggingOutput);
-          Debugging("Debug switch from IP to: ");
-          Debugging(String(DebuggingOutput));
-          Debuggingln();
+          MqttPubString("DebuggingOutput", String(DebuggingOutput), false);
+          Debugging("Debug switch from IP to: "+String(DebuggingOutput));
         }
 
       } // end configure
 
-  //    lcd.print("      ");
+  //    lcd.print(F("      "));
     memset(packetBuffer, 0, sizeof(packetBuffer));   // Clear contents of Buffer
     }
-    InterruptON(1,1,1); // keyb, enc, gps
+    InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
   }
 }
 
@@ -3423,8 +3974,8 @@ unsigned int hexToDec(String hexString) {
 //-------------------------------------------------------------------------------------------------------
 
 void SendBroadcastUdpPTT(int status){         // Measured 2 ms
-  if(ETHERNET_MODULE==1 && GpsTime!=1){
-    InterruptON(0,0,0); // keyb, enc, gps
+  if(EnableEthernet==1 && EthLinkStatus==1 && GpsTime!=1){
+    InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
     TxUdpBuffer[0] = B01100010;         // b  - broadcast
     TxUdpBuffer[1] = B00111010;         // :
@@ -3437,31 +3988,38 @@ void SendBroadcastUdpPTT(int status){         // Measured 2 ms
     UdpCommand.beginPacket(BroadcastIP, BroadcastPort);   // Send to IP and port from recived UDP command
       UdpCommand.write(TxUdpBuffer, sizeof(TxUdpBuffer));   // send buffer
     UdpCommand.endPacket();
-    InterruptON(1,1,1); // keyb, enc, gps
+    InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
   }
 }
 //-------------------------------------------------------------------------------------------------------
 
-void Debugging(String StringForDebug){    // not implemented yet !
+void Debugging(String StringForDebug){
+  StringForDebug.reserve(50);
   if(DebuggingOutput!=0){
     // Serial0 KEY
     if(DebuggingOutput==1){
       Serial.print(StringForDebug);
+      Serial.println();
     }
     // Serial2 CAT
     if(DebuggingOutput==2){
       Serial2.print(StringForDebug);
+      Serial2.println();
     }
     // UDP IP
-    if(DebuggingOutput==3 && ETHERNET_MODULE==1){
+    if(DebuggingOutput==3 && EnableEthernet==true && EthLinkStatus==1){
       DebuggingIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
       UdpCommand.beginPacket(DebuggingIP, DebuggingPort);
       // UdpCommand.beginMulticast(UdpCommand.BroadcastIP(), BroadcastPort, ETH.localIP()).
-        UdpCommand.print("NET_ID");
-        UdpCommand.print("debug:");
+        UdpCommand.print(F("NET_ID"));
+        UdpCommand.print(F("debug:"));
         UdpCommand.print(StringForDebug);
-        UdpCommand.print(";");
+        UdpCommand.print(F(";"));
       UdpCommand.endPacket();
+    }
+    // MQTT
+    if(DebuggingOutput==4){
+      MqttPubString("debug", StringForDebug, false);
     }
   }
 }
@@ -3481,36 +4039,28 @@ void Debuggingln(){
 }
 //-------------------------------------------------------------------------------------------------------
 void SendBroadcastUdp(){
-  if(ETHERNET_MODULE==1){
-    InterruptON(0,0,0); // keyb, enc, gps
+  if(EnableEthernet==1 && EthLinkStatus==1){
+    InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     BroadcastIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
 
     UdpCommand.beginPacket(BroadcastIP, BroadcastPort);   // Send to IP and port from recived UDP command
     // UdpCommand.beginMulticast(UdpCommand.BroadcastIP(), BroadcastPort, ETH.localIP()).
-      UdpCommand.print("b:o");
+      UdpCommand.print(F("b:o"));
       UdpCommand.write(NET_ID);
-      UdpCommand.print(";");
+      UdpCommand.print(F(";"));
     UdpCommand.endPacket();
 
-    if(DebuggingOutput!=0){
-      Debugging(String("TX Broadcast "));
-      Debugging(String(BroadcastIP));
-      Debugging(String(":"));
-      Debugging(String(BroadcastPort));
-      Debugging(String("   ms "));
-      Debugging(String(Timeout[8][0]));
-      Debuggingln();
-    }
+    Debugging("TX Broadcast "+String(BroadcastIP)+":"+String(BroadcastPort)+"   ms "+String(Timeout[8][0]));
 
     Timeout[8][0] = millis();                      // set time mark
-    InterruptON(1,1,1); // keyb, enc, gps
+    InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
   }
 }
 //-------------------------------------------------------------------------------------------------------
 void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
-  InterruptON(0,0,0); // keyb, enc, gps
-  if(ETHERNET_MODULE == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
-    if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
+  InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
+  if(EnableEthernet == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
+    if (mqttClient.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
       String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       if (value != 0){
@@ -3518,10 +4068,10 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
       }else{
         String(value2).toCharArray( mqttTX, 50 );
       }
-      client.publish(mqttPath, mqttTX, true);
+      mqttClient.publish(mqttPath, mqttTX, true);
     }
   }else{
-    if (client.connect("arduinoClient")) {
+    if (mqttClient.connect("arduinoClient")) {
       String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       if (value != 0){
@@ -3529,30 +4079,49 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
       }else{
         String(value2).toCharArray( mqttTX, 50 );
       }
-      client.publish(mqttPath, mqttTX, true);
+      mqttClient.publish(mqttPath, mqttTX, true);
     }
   }
-  InterruptON(1,1,1); // keyb, enc, gps
+  InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
 }
 //-------------------------------------------------------------------------------------------------------
-void MqttPubString(String path, String character){
-  InterruptON(0,0,0); // keyb, enc, gps
-  if(ETHERNET_MODULE == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
-    if (client.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
+void MqttPubString_old(String path, String character){
+  InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
+  if(EnableEthernet == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
+    if (mqttClient.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
       String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       character.toCharArray( mqttTX, 50 );
-      client.publish(mqttPath, mqttTX);
+      mqttClient.publish(mqttPath, mqttTX);
     }
   }else{
-    if (client.connect("arduinoClient")) {
+    if (mqttClient.connect("arduinoClient")) {
       String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
       path2.toCharArray( mqttPath, 20 );
       character.toCharArray( mqttTX, 50 );
-      client.publish(mqttPath, mqttTX);
+      mqttClient.publish(mqttPath, mqttTX);
     }
   }
-  InterruptON(1,1,1); // keyb, enc, gps
+  InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
+}
+//-----------------------------------------------------------------------------------
+void MqttPubString(String TOPIC, String DATA, bool RETAIN){
+  //  prusa/prusaqc/he-mini-tester/1/test-report
+  // TesterName
+  //example: {"sn":"","timestamp":"240010","msg_id":"0","fn_idx":"0","fn":"","err_msg":"","err_code":"35","test_status":"0"}
+  char charbuf[50];
+   memcpy( charbuf, mac, 6);
+   charbuf[6] = 0;
+  // InterruptON(0,0,0); // keyb, enc, gps
+  if(EnableEthernet==1 && MQTT_ENABLE==1 && EthLinkStatus==1 && mqttClient.connected()==true){
+    if (mqttClient.connect(charbuf)) {
+      String path = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/" + TOPIC;
+      path.toCharArray( mqttPath, 50 );
+      DATA.toCharArray( mqttTX, 50 );
+      mqttClient.publish(mqttPath, mqttTX, RETAIN);
+    }
+  }
+  // InterruptON(1,1,1); // keyb, enc, gps
 }
 //-------------------------------------------------------------------------------------------------------
 void DCinMeasure(){
@@ -3560,15 +4129,18 @@ void DCinMeasure(){
     DCinVoltage = volt(analogRead(DCIN), 11, VOLTAGE_MEASURE_ADJUST);
     if (DCinVoltage<8){
       lcd.setCursor(3, 0);
-      lcd.print("Power LOW!");
+      lcd.print(F("Power LOW!"));
       ActualMenu= 2;
     }else if (DCinVoltage>19){
       lcd.setCursor(2, 0);
-      lcd.print("Power HIGH!");
+      lcd.print(F("Power HIGH!"));
       ActualMenu= 2;
     }
     Timeout[7][0] = millis();                      // set time mark
-      MqttPub("pwrvoltage", DCinVoltage, 0);
+    if(abs(DCinVoltage-PrevDCinVoltage)>0.5){
+      MqttPubString("dc_in", String(DCinVoltage), false);
+      PrevDCinVoltage=DCinVoltage;
+    }
   }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -3580,11 +4152,11 @@ void OpenInterfaceLCD(){    // LCD
           lcd.write(byte(5));               // Interlock icon
       }else{
         if(GpsTime==1 && (ReadGpsData[42]=='1' || ReadGpsData[42]=='2') ){      // gps quality byte
-          lcd.print("+");
+          lcd.print(F("+"));
         } else if (analogRead(SDPLUG)<128){
           lcd.write(byte(4));               // microSD icon
         } else {
-          lcd.print(" ");
+          lcd.print(F(" "));
         }
       }
 
@@ -3598,7 +4170,7 @@ void OpenInterfaceLCD(){    // LCD
       if(ModeMenuStatus == LOW){        // Mode
         lcd.print(modeLCD[ActualMode][0]);
       }else{                            // Menu
-        lcd.print(" <");
+        lcd.print(F(" <"));
 
 //        if(digitalRead(ETHINST)==LOW){
 //          lcd.setCursor(0, 1);
@@ -3607,7 +4179,7 @@ void OpenInterfaceLCD(){    // LCD
 //          lcd.setCursor(12, 1);
 //        }
         if(ActualMenu<10){
-          lcd.print("0");
+          lcd.print(F("0"));
         }
         lcd.print(ActualMenu);
       }
@@ -3625,48 +4197,54 @@ void MenuToLCD(int nr){
   int CulumnPosition = Note.length();
 
   switch (nr) {
+    case 1:{ // rev
+      lcd.setCursor(CulumnPosition-1, 1);
+      lcd.print(REV);
+      CulumnPosition=CulumnPosition+8;
+    break;
+    }
     case 2:{ // DC in
       lcd.setCursor(CulumnPosition, 1);
       lcd.print(DCinVoltage);
-      lcd.print("V");
+      lcd.print(F("V"));
       CulumnPosition=CulumnPosition+6;
     break;
     }
     case 3:{ // DC 3V3
       lcd.setCursor(CulumnPosition, 1);
       lcd.print(volt(analogRead(DC3V), 1, 0));
-      lcd.print("V");
+      lcd.print(F("V"));
       CulumnPosition=CulumnPosition+5;
     break;
     }
     case 4:{ // Band Decoder
       lcd.setCursor(CulumnPosition, 1);
       if (BAND_DECODER_IN == 1){  // ICOM_CIV
-        lcd.print("ICOM");
+        lcd.print(F("ICOM"));
         CulumnPosition=CulumnPosition+4;
       }
       if (BAND_DECODER_IN == 2){  // KENWOOD_PC
-        lcd.print("KENWOOD");
+        lcd.print(F("KENWOOD"));
         CulumnPosition=CulumnPosition+7;
       }
       if (BAND_DECODER_IN == 3){  // YAESU_CAT
-        lcd.print("YAESU2");
+        lcd.print(F("YAESU2"));
         CulumnPosition=CulumnPosition+6;
       }
       if (BAND_DECODER_IN == 4){  // YAESU_CAT_OLD
-        lcd.print("YAESU1");
+        lcd.print(F("YAESU1"));
         CulumnPosition=CulumnPosition+6;
       }
       if (BAND_DECODER_IN == 5){  // INPUT_SERIAL
-        lcd.print("Serial");
+        lcd.print(F("Serial"));
         CulumnPosition=CulumnPosition+6;
       }
       if (BAND_DECODER_IN == 6){  // YAESU_BCD
-        lcd.print("BCD");
+        lcd.print(F("BCD"));
         CulumnPosition=CulumnPosition+3;
       }
       if (BAND_DECODER_IN == 7){  // ICOM_ACC
-        lcd.print("V-IN");
+        lcd.print(F("V-IN"));
         CulumnPosition=CulumnPosition+4;
       }
     break;
@@ -3681,10 +4259,10 @@ void MenuToLCD(int nr){
       lcd.setCursor(CulumnPosition, 1);
       if (BAND_DECODER_IN == 1){  // ICOM_CIV
         lcd.print(CIV_ADRESS, HEX);
-        lcd.print("h");
+        lcd.print(F("h"));
         CulumnPosition=CulumnPosition+3;
       }else{
-        lcd.print("-");
+        lcd.print(F("-"));
         CulumnPosition=CulumnPosition+1;
       }
     break;
@@ -3693,24 +4271,24 @@ void MenuToLCD(int nr){
       lcd.setCursor(CulumnPosition-1, 1);
       int MHZ = freq/1000000;
       if(MHZ<100 && MHZ>9){
-        lcd.print(" ");
+        lcd.print(F(" "));
       }else if(MHZ<10){
-        lcd.print("  ");
+        lcd.print(F("  "));
       }
       lcd.print(MHZ);
-      lcd.print(".");
+      lcd.print(F("."));
       int KHZ = freq/1000-(MHZ*1000);
       if(KHZ<100 && KHZ>9){
-        lcd.print("0");
+        lcd.print(F("0"));
       }else if(KHZ<10){
-        lcd.print("00");
+        lcd.print(F("00"));
       }
       lcd.print(KHZ);
-//      lcd.print(".");
+//      lcd.print(F("."));
 //      int HZ = freq-(MHZ*1000000)-(KHZ*1000);
 //      HZ=HZ/10;
 //      if(HZ<10){
-//        lcd.print("0");
+//        lcd.print(F("0"));
 //      }
 //      lcd.print(HZ);
       CulumnPosition=CulumnPosition+7;
@@ -3723,7 +4301,7 @@ void MenuToLCD(int nr){
         lcd.setCursor(CulumnPosition-1, 1);
       }
       lcd.print(BAND);
-      lcd.print(" ");
+      lcd.print(F(" "));
       lcd.print(BCDmatrixOUT[0][BAND]);
       lcd.print(BCDmatrixOUT[1][BAND]);
       lcd.print(BCDmatrixOUT[2][BAND]);
@@ -3791,21 +4369,21 @@ void MenuToLCD(int nr){
         if(ACC_KEYBOARD == 1){                // if enable ACC shift in buttons
           if(RemoteSwLatencyAnsw==1 || (RemoteSwLatencyAnsw==0 && millis() < RemoteSwLatency[0]+RemoteSwLatency[1]*5)){ // if answer ok, or latency measure nod end
             lcd.print(BandToRemoteSwitchID[BAND]);
-            lcd.print(":");
+            lcd.print(F(":"));
             lcd.print(PrintByte(rxShiftInButton[0]));
             CulumnPosition=CulumnPosition+String(rxShiftInButton[0]).length()-1;
           }else{
             lcd.print(BandToRemoteSwitchID[BAND]);
-            lcd.print(": OFFline");
+            lcd.print(F(": OFFline"));
             CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
           }
         }else{
-          lcd.print(" Disable");
+          lcd.print(F(" Disable"));
           CulumnPosition=CulumnPosition+String(" Disable").length()-1;
         }
       }else{
         lcd.print(BandToRemoteSwitchID[BAND]);
-        lcd.print(":   n/a");
+        lcd.print(F(":   n/a"));
         CulumnPosition=CulumnPosition+String(" :   n/a").length()-1;
       }
     break;
@@ -3816,21 +4394,21 @@ void MenuToLCD(int nr){
         if(ACC_KEYBOARD == 1){
           if(RemoteSwLatencyAnsw==1 || (RemoteSwLatencyAnsw==0 && millis() < RemoteSwLatency[0]+RemoteSwLatency[1]*5)){ // if answer ok, or latency measure nod end
             lcd.print(BandToRemoteSwitchID[BAND]);
-            lcd.print(":");
+            lcd.print(F(":"));
             lcd.print(PrintByte(rxShiftInButton[1]));
             CulumnPosition=CulumnPosition+String(rxShiftInButton[1]).length()-1;
           }else{
             lcd.print(BandToRemoteSwitchID[BAND]);
-            lcd.print(": OFFline");
+            lcd.print(F(": OFFline"));
             CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
           }
         }else{
-          lcd.print(" Disable");
+          lcd.print(F(" Disable"));
           CulumnPosition=CulumnPosition+String(" Disable").length()-1;
         }
       }else{
         lcd.print(BandToRemoteSwitchID[BAND]);
-        lcd.print(":   n/a");
+        lcd.print(F(":   n/a"));
         CulumnPosition=CulumnPosition+String(" :   n/a").length()-1;
       }
     break;
@@ -3840,20 +4418,20 @@ void MenuToLCD(int nr){
       if(DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0){       // if detect IP for this band, +8 because bank C use upper ID 0x08-0x0F
           if(RemoteSwLatencyAnsw==1 || (RemoteSwLatencyAnsw==0 && millis() < RemoteSwLatency[0]+RemoteSwLatency[1]*5)){//(millis()-RemoteSwLatency[0]) < 500){       // if receive answer packet
             lcd.print(BandToRemoteSwitchID[BAND]+8, HEX);
-            lcd.print(":   ");
+            lcd.print(F(":   "));
             if(IpSwitchEncoder+1<10){
-              lcd.print(" ");
+              lcd.print(F(" "));
             }
             lcd.print(IpSwitchEncoder+1);
             CulumnPosition=CulumnPosition+String(IpSwitchEncoder).length()-1+6;
           }else{
             lcd.print(BandToRemoteSwitchID[BAND]+8, HEX);
-            lcd.print(": OFFline");
+            lcd.print(F(": OFFline"));
             CulumnPosition=CulumnPosition+String(" : OFFline").length()-1;
           }
       }else{
         lcd.print(BandToRemoteSwitchID[BAND]+8, HEX);
-        lcd.print(":   n/a");
+        lcd.print(F(":   n/a"));
         CulumnPosition=CulumnPosition+String(" :   n/a").length()-1;
       }
     break;
@@ -3864,18 +4442,18 @@ void MenuToLCD(int nr){
         if(ACC_KEYBOARD == 1 && KeyboardAnswLed == 1){
           if(RemoteSwLatencyAnsw==1 || (RemoteSwLatencyAnsw==0 && millis() < RemoteSwLatency[0]+RemoteSwLatency[1]*5)){ // if answer ok, or latency measure nod end
             lcd.print(RemoteSwLatency[1]);
-            lcd.print("ms");
+            lcd.print(F("ms"));
             CulumnPosition=CulumnPosition+String(RemoteSwLatency[1]).length()-1;
           }else{
-            lcd.print("OFF");
+            lcd.print(F("OFF"));
             CulumnPosition=CulumnPosition+String(" : OFF").length()-1;
           }
         }else{
-          lcd.print("Dis");
+          lcd.print(F("Dis"));
           CulumnPosition=CulumnPosition+String("Dis").length()-1;
         }
       }else{
-        lcd.print("n/a");
+        lcd.print(F("n/a"));
         CulumnPosition=CulumnPosition+String("n/a").length()-1;
       }
     break;
@@ -3891,26 +4469,26 @@ void MenuToLCD(int nr){
       if(GpsTime==1){
         if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){      // gps quality byte
           if(GpsUtc[0]<10){
-            lcd.print("0");
+            lcd.print(F("0"));
           }
           lcd.print(GpsUtc[0]);
-          lcd.print(":");
+          lcd.print(F(":"));
           if(GpsUtc[1]<10){
-            lcd.print("0");
+            lcd.print(F("0"));
           }
           lcd.print(GpsUtc[1]);
-          lcd.print(":");
+          lcd.print(F(":"));
           if(GpsUtc[2]<10){
-            lcd.print("0");
+            lcd.print(F("0"));
           }
           lcd.print(GpsUtc[2]);
           CulumnPosition=CulumnPosition+String("xx:xx:xx").length();
         }else{
-          lcd.print(" GPS QRX ");
+          lcd.print(F(" GPS QRX "));
           CulumnPosition=CulumnPosition+String(" GPS QRX ").length();
         }
       }else{
-        lcd.print(" GPS n/a");
+        lcd.print(F(" GPS n/a"));
         CulumnPosition=CulumnPosition+String(" n/a").length();
       }
     break;
@@ -3923,11 +4501,11 @@ void MenuToLCD(int nr){
           // lcd.print((GpsTimeMillisDiff+millis()+10000), HEX);   // utc time + 10s
           CulumnPosition=CulumnPosition+String(GpsTimeMillisDiff, HEX).length();
         }else{
-          lcd.print(" GPS QRX ");
+          lcd.print(F(" GPS QRX "));
           CulumnPosition=CulumnPosition+String(" GPS QRX ").length();
         }
       }else{
-        lcd.print("GPS n/a");
+        lcd.print(F("GPS n/a"));
         CulumnPosition=CulumnPosition+String("GPS n/a").length();
       }
     break;
@@ -3939,11 +4517,11 @@ void MenuToLCD(int nr){
           lcd.print(B4TxTimer);
           CulumnPosition=CulumnPosition+String(B4TxTimer).length();
         }else{
-          lcd.print(" QRX  ");
+          lcd.print(F(" QRX  "));
           CulumnPosition=CulumnPosition+String(" QRX  ").length();
         }
       }else{
-        lcd.print(" n/a  ");
+        lcd.print(F(" n/a  "));
         CulumnPosition=CulumnPosition+String(" n/a  ").length();
       }
     break;
@@ -3954,6 +4532,12 @@ void MenuToLCD(int nr){
       CulumnPosition=CulumnPosition+String(DebuggingOutput).length();
     break;
     }
+    case 27:{ // PTTin
+      lcd.setCursor(CulumnPosition, 1);
+      lcd.print(!InterlockEnable);
+      CulumnPosition=CulumnPosition+String(!InterlockEnable).length();
+    break;
+    }
 
   }
   if(ModeMenuStatus == LOW){        // Mode
@@ -3962,7 +4546,7 @@ void MenuToLCD(int nr){
     CulumnPositionEnd = 12;
   }
   while (CulumnPosition < CulumnPositionEnd) {    // if short, apend spaces
-    lcd.print(" ");
+    lcd.print(F(" "));
     CulumnPosition++;
   }
 }
@@ -4008,15 +4592,22 @@ void OpenInterfaceMENU(){
             if(ModeMenuStatus == LOW){                       // if MENU disable, MODE active
               if (ptt_interlock_active == 1 && InterlockFromUdpActive == HIGH) {   // if UDP Interlock ON
                 ptt_interlock_active = B00000;                            // manual UDP interlock OFF
-                  MqttPub("interlock", 0, ptt_interlock_active);
+                  MqttPubString("interlock", String(ptt_interlock_active), false);
                   LcdNeedRefresh = 1;
               }else{
-                ActualMode++;
-                if(ActualMode==6){
-                  ActualMode=0;
-                }
-                  MqttPub("mode", 0, ActualMode);
-                SwitchHardware(ActualMode);
+                // if(BAND_DECODER_IN==2 && ActualMode==2){ // kenwood && ssb > switch between fsk/dig
+                //
+                // }else{
+                  ActualMode++;
+                  if(ActualMode==6){
+                    ActualMode=0;
+                  }
+                  if(ActualMode!=ActualModePrev){
+                    ActualModePrev=ActualMode;
+                    MqttPubString("mode", String(ActualMode), false);
+                    SwitchHardware(ActualMode);
+                  }
+                // }
               } // end if UDP Interlock ON
             }else{ // menu enable
               ActualMenu++;
@@ -4039,17 +4630,23 @@ void OpenInterfaceMENU(){
 void SwitchHardware(int SwitchHardwareMode){
   switch (SwitchHardwareMode) {
     case 0:{ // CW Keyer
+        // primary_serial_port_mode = SERIAL_WINKEY_EMULATION;   // for k3ng code
+        // Serial.end();
+        // Serial.begin(1200);
         digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
         digitalWrite (AFSK, LOW);
         break;
     }
-    case 1:{ // CW PC
+    case 1:{ // CW DTR/RTS
+        // primary_serial_port_mode = SERIAL_CLI;   // for k3ng code
+        // Serial.end();
+        // Serial.begin(SERBAUD0);
         digitalWrite (WINKEY, LOW);
         digitalWrite (AFSK, LOW);
         break;
     }
     case 2:{ // SSB
-        digitalWrite (WINKEY, LOW);
+        digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
         digitalWrite (AFSK, LOW);
         break;
     }
@@ -4077,13 +4674,13 @@ void SwitchHardware(int SwitchHardwareMode){
 void OpenInterfaceMODE(){
   // MODE
   switch (ActualMode) { // MODE
-    case 0:{ // CW Keyer
+    case 0:{ // CW Keyer + WinKey
       if (K3NG_KEYER == true){
         K3NG_key();
       }
     break;
     }
-    case 1:{ // CW PC
+    case 1:{ // CW dtr/rts
       if(digitalRead(PTT232)==HIGH){    // PTT-232
         ptt_high(PTTmodeCW);
         if(Ptt232Active == LOW){
@@ -4103,13 +4700,13 @@ void OpenInterfaceMODE(){
         ptt_high(PTTmodeSSB);
         if(FootSwChange != 1){          // if change
           FootSwChange = 1;
-            MqttPub("footsw", 0, 1);
+            MqttPubString("footsw", "1", false);
         }
       }else{
         if(FootSwChange != 0){
           ptt_low(PTTmodeSSB);
           FootSwChange = 0;
-            MqttPub("footsw", 0, 0);
+            MqttPubString("footsw", "0", false);
         }
       }
       MenuEncoder();
@@ -4134,7 +4731,7 @@ void OpenInterfaceMODE(){
       MenuEncoder();
     break;
     }
-    case 4:{ // FSK
+    case 4:{ // FSK CLI
       if (FSK_TX==true){
         ButtonFSK();
         Serial2FSK();
@@ -4164,6 +4761,7 @@ int TON(int ToneType){
     switch (ToneType) {
       case 0: tone(TONE, 200, 200); break;
       case 1: tone(TONE, 400, 50); break;
+      case 2: tone(TONE, 300, 20); break;
     }
   }
 }
@@ -4206,7 +4804,7 @@ void FSKmemoryTX(int memory){
     positionCounter++;
     if (positionCounter > 15){
         lcd.setCursor(0, 0);
-        lcd.print("                ");
+        lcd.print(F("                "));
         lcd.setCursor(0, 0);
         positionCounter=0;
     }
@@ -4266,7 +4864,7 @@ void FSKmemoryTX(int memory){
 // SERIAL TO FSK TX
 void Serial2FSK(){
     if (Serial.available()) {
-      InterruptON(0,0,0); // keyb, enc, gps
+      InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
         fig1 = 1;                         // every shift to start message
         lcd.setCursor(positionCounter, 0);
         if (AFSK_ENABLE == true){
@@ -4278,7 +4876,7 @@ void Serial2FSK(){
             positionCounter++;
             if (positionCounter > 15){
                 lcd.setCursor(0, 0);
-                lcd.print("                ");
+                lcd.print(F("                "));
                 lcd.setCursor(0, 0);
                 positionCounter=0;
             }
@@ -4335,7 +4933,7 @@ void Serial2FSK(){
           noTone(TONE);
         }
       }
-      InterruptON(1,1,1); // keyb, enc, gps
+      InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
 }
 
 void sendFsk(){
@@ -4414,7 +5012,7 @@ void sendFsk(){
 
 void chTable()
 {
-          MqttPubString("rtty", String(ch));
+          MqttPubString("rtty", String(ch), false);
         fig2 = -1;
         if(ch == ' ')
         {
@@ -4582,12 +5180,12 @@ void fskDecoder(){
                           positionCounter++;
                           if (positionCounter > 15){
                               lcd.setCursor(0, 0);
-                              lcd.print("                ");
+                              lcd.print(F("                "));
                               lcd.setCursor(0, 0);
                               positionCounter=0;
                           }
                           lcd.print(chIn);
-                            MqttPubString("rtty", String(chIn));
+                            MqttPubString("rtty", String(chIn), false);
                 }
                 dsp = 0;
         }
@@ -4662,7 +5260,7 @@ void BandDecoder() {
             #if defined(SERIAL_echo)
                 serialEcho();
                 Serial.print(VOLTAGE);
-                Serial.println(" V");
+                Serial.println(F(" V"));
                 Serial.flush();
             #endif
             Timeout[2][0] = millis();                      // set time mark
@@ -4680,7 +5278,7 @@ void BandDecoder() {
 
         if (BAND_DECODER_IN == 1){  // ICOM_CIV
             if (Serial2.available() > 0) {
-              InterruptON(0,0,0); // keyb, enc, gps
+              InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
                 incomingByte = Serial2.read();
                 icomSM(incomingByte);
                 rdIS="";
@@ -4707,11 +5305,15 @@ void BandDecoder() {
                         Timeout[3][0] = millis(); // set time mark
                     }
                 }
-                if(rdI[4]==0x04 && rdI[7]==0xFD){    // Mode - 04 command and state machine end
+                if(rdI[4]==0x04 && rdI[7]==0xFD && freq!=0){    // Mode - 04 command and state machine end
                   ActualMode=CIVModeSet[rdI[5]];        // set mode by CIVModeSet table
-                  SwitchHardware(ActualMode);
+                  if(ActualMode!=ActualModePrev){
+                    ActualModePrev=ActualMode;
+                    MqttPubString("mode", String(ActualMode), false);
+                    SwitchHardware(ActualMode);
+                  }
                 }
-                InterruptON(1,1,1); // keyb, enc, gps
+                InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
             }
         }
 
@@ -4727,7 +5329,7 @@ void BandDecoder() {
             YBCD2 = digitalRead(BCD2);
             YBCD3 = digitalRead(BCD3);
             YBCD4 = digitalRead(BCD4);
-            boolean BCDmatrix[4][15] = { /*
+            bool BCDmatrix[4][15] = { /*
 
             =======[ Input BCD ]====================================================================
 
@@ -4785,6 +5387,14 @@ void BandDecoder() {
                     if (BAND_DECODER_WATCHDOG > 0){
                         Timeout[3][0] = millis();                      // set time mark
                     }
+                    if(freq!=0){
+                      ActualMode=KenwoodCatModeSet[String(rdK[29]).toInt()];        // get mode
+                      if(ActualMode!=ActualModePrev){
+                        ActualModePrev=ActualMode;
+                        MqttPubString("mode", String(ActualMode), false);
+                        SwitchHardware(ActualMode);
+                      }
+                    }
                 }
                 memset(rdK, 0, sizeof(rdK));   // Clear contents of Buffer
         }
@@ -4794,7 +5404,7 @@ void BandDecoder() {
 
         if(BAND_DECODER_REQUEST > 0){
             if (millis() - Timeout[4][0] > (Timeout[4][1])){
-                Serial2.print("IF;");
+                Serial2.print(F("IF;"));
                 Serial2.flush();
                 Timeout[4][0] = millis();              // set time mark
             }
@@ -4833,7 +5443,7 @@ void BandDecoder() {
 
         if(BAND_DECODER_REQUEST > 0){
             if (millis() - Timeout[4][0] > (Timeout[4][1])){
-                Serial2.print("IF;");
+                Serial2.print(F("IF;"));
                 Serial2.flush();
                 Timeout[4][0] = millis();              // set time mark
             }
@@ -4971,11 +5581,13 @@ void bandSET() {
     #if defined(BCD_OUT)
         bcdOut();
     #endif
-    if (ETHERNET_MODULE==1){
-      float freqPub = freq;
-      freqPub = freqPub/1000;
-      MqttPub("khz", freqPub, 0);
-      MqttPub("band", 0, BAND);
+    if (EnableEthernet==1 && (freq!=prevfreq) && EthLinkStatus==1){
+      // float freqPub = freq;
+      // freqPub = freqPub/1000;
+      // MqttPubString("khz", String(freqPub), false);
+      MqttPubString("hz", String(freq), false);
+      MqttPubString("band", String(BAND), false);
+      prevfreq=freq;
     }
 }
 
@@ -4990,11 +5602,11 @@ void remoteRelay() {
 
 // SERIAL OUT
 void serialEcho() {
-    Serial.print("<");
+    Serial.print(F("<"));
     Serial.print(BAND);
-    Serial.print(",");
+    Serial.print(F(","));
     Serial.print(freq);
-    Serial.println(">");
+    Serial.println(F(">"));
     Serial.flush();
 }
 
@@ -5250,12 +5862,12 @@ void K3NG_key()                                                      // changed 
             compression_detection_indicator_on = 1;
             digitalWrite(compression_detection_pin,HIGH);
             #if defined(DEBUG_FEATURE_COMPETITION_COMPRESSION_DETECTION)
-              debug_serial_port->print("service_competition_compression_detection: time_array: ");
+              debug_serial_port->print(F("service_competition_compression_detection: time_array: "));
               for (int i = 0;i < COMPETITION_COMPRESSION_DETECTION_ARRAY_SIZE;i++){
                 debug_serial_port->print(time_array[i]);
-                debug_serial_port->print(" ");
+                debug_serial_port->print(F(" "));
               }
-              debug_serial_port->print("\n\rservice_competition_compression_detection: COMPRESSION DETECTION ON  average: ");
+              debug_serial_port->print(F("\n\rservice_competition_compression_detection: COMPRESSION DETECTION ON  average: "));
               debug_serial_port->println(time_average);
             #endif
           }
@@ -5265,12 +5877,12 @@ void K3NG_key()                                                      // changed 
             compression_detection_indicator_on = 0;
             digitalWrite(compression_detection_pin,LOW);
             #if defined(DEBUG_FEATURE_COMPETITION_COMPRESSION_DETECTION)
-              debug_serial_port->print("service_competition_compression_detection: time_array: ");
+              debug_serial_port->print(F("service_competition_compression_detection: time_array: "));
               for (int i = 0;i < COMPETITION_COMPRESSION_DETECTION_ARRAY_SIZE;i++){
                 debug_serial_port->print(time_array[i]);
-                debug_serial_port->print(" ");
+                debug_serial_port->print(F(" "));
               }
-              debug_serial_port->print("\n\rservice_competition_compression_detection: COMPRESSION DETECTION OFF  average: ");
+              debug_serial_port->print(F("\n\rservice_competition_compression_detection: COMPRESSION DETECTION OFF  average: "));
               debug_serial_port->println(time_average);
             #endif
           }
@@ -5367,7 +5979,7 @@ void K3NG_key()                                                      // changed 
               if (!cw_keyboard_no_space){
                 Keyboard.write(' ');
                 #ifdef DEBUG_CW_COMPUTER_KEYBOARD
-                  debug_serial_port->println("service_straight_key: Keyboard.write: <space>");
+                  debug_serial_port->println(F("service_straight_key: Keyboard.write: <space>"));
                 #endif //DEBUG_CW_COMPUTER_KEYBOARD
               }
               cw_keyboard_no_space = 0;
@@ -5448,9 +6060,9 @@ void K3NG_key()                                                      // changed 
 
       #ifdef DEBUG_FEATURE_STRAIGHT_KEY_ECHO
         if (abs(decoder_wpm - last_printed_decoder_wpm) > 0.9) {
-          debug_serial_port->print("<");
+          debug_serial_port->print(F("<"));
           debug_serial_port->print(int(decoder_wpm));
-          debug_serial_port->print(">");
+          debug_serial_port->print(F(">"));
           last_printed_decoder_wpm = decoder_wpm;
         }
       #endif //DEBUG_FEATURE_STRAIGHT_KEY_ECHO
@@ -5659,7 +6271,7 @@ void K3NG_key()                                                      // changed 
         } //switch (decode_character)
 
         #ifdef DEBUG_CW_COMPUTER_KEYBOARD
-          debug_serial_port->print("service_straight_key: Keyboard.write: ");
+          debug_serial_port->print(F("service_straight_key: Keyboard.write: "));
           debug_serial_port->write(character_to_send);
           debug_serial_port->println();
         #endif //DEBUG_CW_COMPUTER_KEYBOARD
@@ -5738,7 +6350,7 @@ This code from http://forum.arduino.cc/index.php?topic=136500.0
 
 static uint8_t pinEnabled[PINS_COUNT];
 static uint8_t TCChanEnabled = 0;
-static boolean pin_state = false ;
+static bool pin_state = false ;
 static Tc *chTC = TONE_TIMER;
 static uint32_t chNo = TONE_CHNL;
 
@@ -6101,7 +6713,7 @@ void display_scroll_print_char(char charin){
   #ifdef DEBUG_DISPLAY_SCROLL_PRINT_CHAR
   debug_serial_port->print(F("display_scroll_print_char: "));
   debug_serial_port->write(charin);
-  debug_serial_port->print(" ");
+  debug_serial_port->print(F(" "));
   debug_serial_port->println(charin);
   #endif //DEBUG_DISPLAY_SCROLL_PRINT_CHAR
 
@@ -6204,7 +6816,7 @@ void clear_display_row(byte row_number)
 {
   for (byte x = 0; x < LCD_COLUMNS; x++) {
     lcd.setCursor(x,row_number);
-    lcd.print(" ");
+    lcd.print(F(" "));
   }
 }
 #endif
@@ -6310,7 +6922,7 @@ void check_ps2_keyboard()
     keystroke = keyboard.read();
 
     #if defined(DEBUG_PS2_KEYBOARD)
-      debug_serial_port->print("check_ps2_keyboard: keystroke: ");
+      debug_serial_port->print(F("check_ps2_keyboard: keystroke: "));
       debug_serial_port->println(keystroke,DEC);
     #endif //DEBUG_PS2_KEYBOARD
 
@@ -6492,7 +7104,7 @@ void check_ps2_keyboard()
 
         case PS2_LEFT_ALT :
           #ifdef DEBUG_PS2_KEYBOARD
-            debug_serial_port->println("PS2_LEFT_ALT\n");
+            debug_serial_port->println(F("PS2_LEFT_ALT\n"));
           #endif
           break;
 
@@ -6959,7 +7571,7 @@ void check_ps2_keyboard()
 
         case PS2_LEFT_ALT :
           #ifdef DEBUG_PS2_KEYBOARD
-          debug_serial_port->println("PS2_LEFT_ALT\n");
+          debug_serial_port->println(F("PS2_LEFT_ALT\n"));
           #endif
           break;
 
@@ -7548,7 +8160,7 @@ void debug_capture_dump()
       x = 0;
     }
   }
-  primary_serial_port->println("\n");
+  primary_serial_port->println(F("\n"));
   for ( int x = 1022; x > (1022-100); x-- ) {
     eeprom_byte_in = EEPROM.read(x);
     if (eeprom_byte_in < 255) {
@@ -8028,7 +8640,7 @@ void ptt_unkey()
 {
   if (ptt_line_activated) {
     if (configuration.current_ptt_line) {
-      ptt_low(PTTmodeCW);                                             //  add #OI3
+      ptt_low(PTTmodeCW);                                              //  add #OI3
       // digitalWrite (configuration.current_ptt_line, LOW);  //  disable #OI3
       #if defined(OPTION_WINKEY_2_SUPPORT) && defined(FEATURE_WINKEY_EMULATION)
       if ((wk2_both_tx_activated) && (ptt_tx_2)) {
@@ -8313,7 +8925,7 @@ void send_dit(){
 
   being_sent = SENDING_DIT;
   tx_and_sidetone_key(1);
-   ptt_low(PTTmodeCW);                                //  add #OI3 - PTT alive
+   // ptt_low(PTTmodeCW);                                //  add #OI3 - PTT alive
    #ifdef DEBUG_VARIABLE_DUMP
     dit_start_time = millis();
   #endif
@@ -8402,7 +9014,7 @@ void send_dah(){
 
   being_sent = SENDING_DAH;
   tx_and_sidetone_key(1);
-  ptt_low(PTTmodeCW);                                //  add #OI3 - PTT alive
+  // ptt_low(PTTmodeCW);                                //  add #OI3 - PTT alive
   #ifdef DEBUG_VARIABLE_DUMP
     dah_start_time = millis();
   #endif
@@ -8498,7 +9110,7 @@ void tx_and_sidetone_key (int state)
     if ((compression_detection_key_down_time != 0) && (compression_detection_key_up_time != 0)){  // do we have a measurement waiting for us?
       key_up_to_key_down_time = compression_detection_key_down_time - compression_detection_key_up_time;
       #if defined(DEBUG_FEATURE_COMPETITION_COMPRESSION_DETECTION)
-       // debug_serial_port->print("service_competition_compression_detection: key_up_to_key_down_time:");
+       // debug_serial_port->print(F("service_competition_compression_detection: key_up_to_key_down_time:"));
         //debug_serial_port->println(key_up_to_key_down_time);
       #endif
       // is the time within the limits of what would be inter-character time?
@@ -8507,9 +9119,9 @@ void tx_and_sidetone_key (int state)
         if (time_array_index < COMPETITION_COMPRESSION_DETECTION_ARRAY_SIZE){
 
           #if defined(DEBUG_FEATURE_COMPETITION_COMPRESSION_DETECTION)
-            debug_serial_port->print("tx_and_sidetone_key: service_competition_compression_detection: array entry ");
+            debug_serial_port->print(F("tx_and_sidetone_key: service_competition_compression_detection: array entry "));
             debug_serial_port->print(time_array_index);
-            debug_serial_port->print(":");
+            debug_serial_port->print(F(":"));
             debug_serial_port->println(key_up_to_key_down_time);
           #endif
 
@@ -8524,9 +9136,9 @@ void tx_and_sidetone_key (int state)
 
 
           #if defined(DEBUG_FEATURE_COMPETITION_COMPRESSION_DETECTION)
-            debug_serial_port->print("tx_and_sidetone_key: service_competition_compression_detection: FIFO array entry ");
+            debug_serial_port->print(F("tx_and_sidetone_key: service_competition_compression_detection: FIFO array entry "));
             debug_serial_port->print(time_array_index);
-            debug_serial_port->print(":");
+            debug_serial_port->print(F(":"));
             debug_serial_port->println(key_up_to_key_down_time);
           #endif
 
@@ -8534,7 +9146,7 @@ void tx_and_sidetone_key (int state)
 
       } else {
         #if defined(DEBUG_FEATURE_COMPETITION_COMPRESSION_DETECTION)
-          //debug_serial_port->print("tx_and_sidetone_key: service_competition_compression_detection: discarded entry: ");
+          //debug_serial_port->print(F("tx_and_sidetone_key: service_competition_compression_detection: discarded entry: "));
           //debug_serial_port->println(key_up_to_key_down_time);
         #endif
       }
@@ -8978,8 +9590,6 @@ void speed_change(int change)
     speed_set(configuration.wpm + change);
   }
 
-
-
   #ifdef FEATURE_DISPLAY
     lcd_center_print_timed_wpm();
   #endif
@@ -8991,6 +9601,8 @@ void speed_set(int wpm_set){
 
   configuration.wpm = wpm_set;
   config_dirty = 1;
+
+  MqttPubString("wpm", String(configuration.wpm), false); // add for #OI3
 
   #ifdef FEATURE_DYNAMIC_DAH_TO_DIT_RATIO
     if ((configuration.wpm >= DYNAMIC_DAH_TO_DIT_RATIO_LOWER_LIMIT_WPM) && (configuration.wpm <= DYNAMIC_DAH_TO_DIT_RATIO_UPPER_LIMIT_WPM)){
@@ -9960,11 +10572,11 @@ void initialize_analog_button_array() {
       #endif
 
       #ifdef DEBUG_BUTTON_ARRAY
-        debug_serial_port->print("initialize_analog_button_array: ");
+        debug_serial_port->print(F("initialize_analog_button_array: "));
         debug_serial_port->print(x);
-        debug_serial_port->print(": ");
+        debug_serial_port->print(F(": "));
         debug_serial_port->print(button_array_low_limit[x]);
-        debug_serial_port->print(" - ");
+        debug_serial_port->print(F(" - "));
         debug_serial_port->println(button_array_high_limit[x]);
       #endif //DEBUG_BUTTON_ARRAY
 
@@ -11502,90 +12114,90 @@ void winkey_load_settings_command(byte winkey_status,byte incoming_serial_byte) 
   switch(winkey_status) {
      case WINKEY_LOAD_SETTINGS_PARM_1_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_1_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_1_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_setmode_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_2_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_2_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_2_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_unbuffered_speed_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_3_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_3_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_3_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_sidetone_freq_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_4_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_4_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_4_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_weighting_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_5_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_5_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_5_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_ptt_times_parm1_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_6_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_6_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_6_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_ptt_times_parm2_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_7_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_7_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_7_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_set_pot_parm1_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_8_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_8_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_8_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_set_pot_parm2_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_9_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_9_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_9_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_first_extension_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_10_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_10_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_10_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_keying_compensation_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_11_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_11_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_11_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_farnsworth_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_12_COMMAND:  // paddle switchpoint - don't need to support
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_12_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_12_COMMAND"));
        #endif //DEBUG_WINKEY
        break;
      case WINKEY_LOAD_SETTINGS_PARM_13_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_13_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_13_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_dah_to_dit_ratio_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_14_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_14_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_14_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_set_pinconfig_command(incoming_serial_byte);
        break;
      case WINKEY_LOAD_SETTINGS_PARM_15_COMMAND:
        #ifdef DEBUG_WINKEY
-         debug_serial_port->println("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_15_COMMAND");
+         debug_serial_port->println(F("winkey_load_settings_command: WINKEY_LOAD_SETTINGS_PARM_15_COMMAND"));
        #endif //DEBUG_WINKEY
        winkey_set_pot_parm3_command(incoming_serial_byte);
        break;
@@ -11936,18 +12548,18 @@ void winkey_port_write(byte byte_to_send){
 
   primary_serial_port->write(byte_to_send);
   #ifdef DEBUG_WINKEY
-    debug_serial_port->print("Winkey Port TX: ");
+    debug_serial_port->print(F("Winkey Port TX: "));
     // if ((byte_to_send != 13) && (byte_to_send != 9) && (byte_to_send != 10)){
     if ((byte_to_send > 31) && (byte_to_send < 127)){
       debug_serial_port->write(byte_to_send);
     } else {
-      debug_serial_port->print(".");
+      debug_serial_port->print(F("."));
     }
-    debug_serial_port->print(" [");
+    debug_serial_port->print(F(" ["));
     debug_serial_port->print(byte_to_send);
-    debug_serial_port->print("] [0x");
+    debug_serial_port->print(F("] [0x"));
     debug_serial_port->print(byte_to_send,HEX);
-    debug_serial_port->println("]");
+    debug_serial_port->println(F("]"));
   #endif
 }
 
@@ -12003,7 +12615,7 @@ void service_winkey(byte action) {
     if (winkey_interrupted) {   // if Winkey sending was interrupted by the paddle, look at PTT line rather than timing out to send 0xc0
       if (ptt_line_activated == 0) {
         #ifdef DEBUG_WINKEY
-          debug_serial_port->println("\r\nservice_winkey: sending unsolicited status byte due to paddle interrupt...");
+          debug_serial_port->println(F("\r\nservice_winkey: sending unsolicited status byte due to paddle interrupt..."));
         #endif //DEBUG_WINKEY
         winkey_sending = 0;
         clear_send_buffer();
@@ -12029,7 +12641,7 @@ void service_winkey(byte action) {
         #endif
         //add_to_send_buffer(' ');    // this causes a 0x20 to get echoed back to host - doesn't seem to effect N1MM program
         #ifdef DEBUG_WINKEY
-          debug_serial_port->println("\r\nservice_winkey: sending unsolicited status byte...");
+          debug_serial_port->println(F("\r\nservice_winkey: sending unsolicited status byte..."));
         #endif //DEBUG_WINKEY
         winkey_sending = 0;
         winkey_port_write(0xc0|winkey_sending|winkey_xoff);    // tell the host we've sent everything
@@ -12040,7 +12652,7 @@ void service_winkey(byte action) {
     // failsafe check - if we've been in some command status for awhile waiting for something, clear things out
     if ((winkey_status != WINKEY_NO_COMMAND_IN_PROGRESS) && ((millis() - winkey_last_activity) > winkey_command_timeout_ms)) {
       #ifdef DEBUG_WINKEY
-        debug_serial_port->println("\r\nservice_winkey: command timeout! ->WINKEY_NO_COMMAND_IN_PROGRESS");
+        debug_serial_port->println(F("\r\nservice_winkey: command timeout! ->WINKEY_NO_COMMAND_IN_PROGRESS"));
       #endif //DEBUG_WINKEY
       winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
       winkey_buffer_counter = 0;
@@ -12049,7 +12661,7 @@ void service_winkey(byte action) {
     }
     if ((winkey_host_open) && (winkey_paddle_echo_buffer) && (winkey_paddle_echo_activated) && (millis() > winkey_paddle_echo_buffer_decode_time)) {
       #ifdef DEBUG_WINKEY
-        debug_serial_port->println("\r\nservice_winkey: sending paddle echo char...");
+        debug_serial_port->println(F("\r\nservice_winkey: sending paddle echo char..."));
       #endif //DEBUG_WINKEY
       winkey_port_write(byte(convert_cw_number_to_ascii(winkey_paddle_echo_buffer)));
       winkey_paddle_echo_buffer = 0;
@@ -12058,7 +12670,7 @@ void service_winkey(byte action) {
     }
     if ((winkey_host_open) && (winkey_paddle_echo_buffer == 0) && (winkey_paddle_echo_activated) && (millis() > (winkey_paddle_echo_buffer_decode_time + (float(1200/configuration.wpm)*(configuration.length_wordspace-length_letterspace)))) && (!winkey_paddle_echo_space_sent)) {
       #ifdef DEBUG_WINKEY
-        debug_serial_port->println("\r\nservice_winkey: sending paddle echo space...");
+        debug_serial_port->println(F("\r\nservice_winkey: sending paddle echo space..."));
       #endif //DEBUG_WINKEY
       winkey_port_write(' ');
       winkey_paddle_echo_space_sent = 1;
@@ -12067,19 +12679,19 @@ void service_winkey(byte action) {
 
   if (action == SERVICE_SERIAL_BYTE) {
     #ifdef DEBUG_WINKEY
-      debug_serial_port->print("Winkey Port RX: ");
+      debug_serial_port->print(F("Winkey Port RX: "));
       if ((incoming_serial_byte > 31) && (incoming_serial_byte < 127)){
         debug_serial_port->write(incoming_serial_byte);
       } else {
-        debug_serial_port->print(".");
+        debug_serial_port->print(F("."));
       }
-      debug_serial_port->print(" [");
+      debug_serial_port->print(F(" ["));
       debug_serial_port->print(incoming_serial_byte);
-      debug_serial_port->print("]");
-      debug_serial_port->print(" [0x");
-      if (incoming_serial_byte < 16){debug_serial_port->print("0");}
+      debug_serial_port->print(F("]"));
+      debug_serial_port->print(F(" [0x"));
+      if (incoming_serial_byte < 16){debug_serial_port->print(F("0"));}
       debug_serial_port->print(incoming_serial_byte,HEX);
-      debug_serial_port->println("]");
+      debug_serial_port->println(F("]"));
     #endif //DEBUG_WINKEY
 
     winkey_last_activity = millis();
@@ -12121,7 +12733,7 @@ void service_winkey(byte action) {
 
         if (!winkey_sending) {
           #ifdef DEBUG_WINKEY
-            debug_serial_port->println("service_winkey: status byte: starting to send...");
+            debug_serial_port->println(F("service_winkey: status byte: starting to send..."));
           #endif //DEBUG_WINKEY
           winkey_sending=0x04;
           #if !defined(OPTION_WINKEY_UCXLOG_SUPRESS_C4_STATUS_BYTE)
@@ -12141,43 +12753,43 @@ void service_winkey(byte action) {
           case 0x00:
             winkey_status = WINKEY_ADMIN_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x01:
             winkey_status = WINKEY_SIDETONE_FREQ_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_SIDETONE_FREQ_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_SIDETONE_FREQ_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x02:  // speed command - unbuffered
             winkey_status = WINKEY_UNBUFFERED_SPEED_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_UNBUFFERED_SPEED_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_UNBUFFERED_SPEED_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x03:  // weighting
             winkey_status = WINKEY_WEIGHTING_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_WEIGHTING_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_WEIGHTING_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x04: // PTT lead and tail time
             winkey_status = WINKEY_PTT_TIMES_PARM1_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_PTT_TIMES_PARM1_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_PTT_TIMES_PARM1_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x05:     // speed pot set
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_SET_POT_PARM1_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_SET_POT_PARM1_COMMAND"));
             #endif //DEBUG_WINKEY
             winkey_status = WINKEY_SET_POT_PARM1_COMMAND;
             break;
           case 0x06:
             winkey_status = WINKEY_PAUSE_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_PAUSE_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_PAUSE_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x07:
@@ -12188,7 +12800,7 @@ void service_winkey(byte action) {
               winkey_port_write((byte(configuration.wpm-pot_wpm_low_value)|128));
             #endif
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: report pot");
+              debug_serial_port->println(F("service_winkey: report pot"));
             #endif //DEBUG_WINKEY
             break;
           case 0x08:    // backspace command
@@ -12196,7 +12808,7 @@ void service_winkey(byte action) {
               send_buffer_bytes--;
             }
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: backspace");
+              debug_serial_port->println(F("service_winkey: backspace"));
             #endif //DEBUG_WINKEY
             break;
           case 0x09:
@@ -12205,18 +12817,18 @@ void service_winkey(byte action) {
                 winkey_status = WINKEY_SET_PINCONFIG_COMMAND;  // if we've been connected for more than 10 seconds, ignore the 0x09 byte
               }
               #ifdef DEBUG_WINKEY
-                debug_serial_port->println("service_winkey: WINKEY_SET_PINCONFIG_COMMAND (N1MM bug workaround)");
+                debug_serial_port->println(F("service_winkey: WINKEY_SET_PINCONFIG_COMMAND (N1MM bug workaround)"));
               #endif //DEBUG_WINKEY
             #else
               #ifdef DEBUG_WINKEY
-                debug_serial_port->println("service_winkey: WINKEY_SET_PINCONFIG_COMMAND");
+                debug_serial_port->println(F("service_winkey: WINKEY_SET_PINCONFIG_COMMAND"));
               #endif //DEBUG_WINKEY
               winkey_status = WINKEY_SET_PINCONFIG_COMMAND;
             #endif
             break;
           case 0x0a:                 // 0A - clear buffer - no parms
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: 0A clear buffer");
+              debug_serial_port->println(F("service_winkey: 0A clear buffer"));
             #endif //DEBUG_WINKEY
             if (winkey_sending) {
               clear_send_buffer();
@@ -12237,61 +12849,61 @@ void service_winkey(byte action) {
           case 0x0b:
             winkey_status = WINKEY_KEY_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_KEY_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_KEY_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x0c:
             winkey_status = WINKEY_HSCW_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_HSCW_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_HSCW_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x0d:
             winkey_status = WINKEY_FARNSWORTH_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_FARNSWORTH_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_FARNSWORTH_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x0e:
             winkey_status = WINKEY_SETMODE_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_SETMODE_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_SETMODE_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x0f:  // bulk load of defaults
             winkey_status = WINKEY_LOAD_SETTINGS_PARM_1_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_LOAD_SETTINGS_PARM_1_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_LOAD_SETTINGS_PARM_1_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x10:
             winkey_status = WINKEY_FIRST_EXTENSION_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_FIRST_EXTENSION_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_FIRST_EXTENSION_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x11:
             winkey_status = WINKEY_KEYING_COMPENSATION_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_KEYING_COMPENSATION_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_KEYING_COMPENSATION_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x12:
             winkey_status = WINKEY_UNSUPPORTED_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: 0x12 unsupported");
+              debug_serial_port->println(F("service_winkey: 0x12 unsupported"));
             #endif //DEBUG_WINKEY
             winkey_parmcount = 1;
             break;
           case 0x13:  // NULL command
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: 0x13 null");
+              debug_serial_port->println(F("service_winkey: 0x13 null"));
             #endif //DEBUG_WINKEY
             break;
           case 0x14:
             winkey_status = WINKEY_SOFTWARE_PADDLE_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_SOFTWARE_PADDLE_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_SOFTWARE_PADDLE_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x15:  // report status
@@ -12302,7 +12914,7 @@ void service_winkey(byte action) {
               }
               winkey_port_write(status_byte_to_send);
               #ifdef DEBUG_WINKEY
-                debug_serial_port->print("service_winkey: 0x15 rpt status: ");
+                debug_serial_port->print(F("service_winkey: 0x15 rpt status: "));
                 debug_serial_port->println(status_byte_to_send);
               #endif //DEBUG_WINKEY
             #else //OPTION_WINKEY_IGNORE_FIRST_STATUS_REQUEST ------------------------
@@ -12313,13 +12925,13 @@ void service_winkey(byte action) {
                 }
                 winkey_port_write(status_byte_to_send);
                 #ifdef DEBUG_WINKEY
-                debug_serial_port->print("service_winkey: 0x15 rpt status: ");
+                debug_serial_port->print(F("service_winkey: 0x15 rpt status: "));
                 debug_serial_port->println(status_byte_to_send);
                 #endif //DEBUG_WINKEY
                 } else {
                   ignored_first_status_request = 1;
                   #ifdef DEBUG_WINKEY
-                  debug_serial_port->println("service_winkey: ignored first 0x15 status request");
+                  debug_serial_port->println(F("service_winkey: ignored first 0x15 status request"));
                   #endif //DEBUG_WINKEY
                 }
             #endif //OPTION_WINKEY_IGNORE_FIRST_STATUS_REQUEST --------------------
@@ -12328,61 +12940,61 @@ void service_winkey(byte action) {
           case 0x16:  // Pointer operation
             winkey_status = WINKEY_POINTER_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_POINTER_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_POINTER_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x17:  // dit to dah ratio
             winkey_status = WINKEY_DAH_TO_DIT_RATIO_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_DAH_TO_DIT_RATIO_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_DAH_TO_DIT_RATIO_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           // start of buffered commands ------------------------------
           case 0x18:   //buffer PTT on/off
             winkey_status = WINKEY_BUFFFERED_PTT_COMMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_BUFFFERED_PTT_COMMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_BUFFFERED_PTT_COMMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x19:
             winkey_status = WINKEY_KEY_BUFFERED_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_KEY_BUFFERED_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_KEY_BUFFERED_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x1a:
             winkey_status = WINKEY_WAIT_BUFFERED_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_WAIT_BUFFERED_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_WAIT_BUFFERED_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x1b:
             winkey_status = WINKEY_MERGE_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_MERGE_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_MERGE_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x1c:      // speed command - buffered
              winkey_status = WINKEY_BUFFERED_SPEED_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_BUFFERED_SPEED_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_BUFFERED_SPEED_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x1d:
             winkey_status = WINKEY_BUFFERED_HSCW_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_BUFFERED_HSCW_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_BUFFERED_HSCW_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x1e:  // cancel buffered speed command - buffered
             winkey_status = WINKEY_CANCEL_BUFFERED_SPEED_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_CANCEL_BUFFERED_SPEED_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_CANCEL_BUFFERED_SPEED_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x1f:  // buffered NOP - no need to do anything
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: 1F NOP");
+              debug_serial_port->println(F("service_winkey: 1F NOP"));
             #endif //DEBUG_WINKEY
             break;
         } //switch (incoming_serial_byte)
@@ -12397,14 +13009,14 @@ void service_winkey(byte action) {
       if (winkey_status == WINKEY_UNSUPPORTED_COMMAND) {
         winkey_parmcount--;
         #ifdef DEBUG_WINKEY
-          debug_serial_port->print("service_winkey: WINKEY_UNSUPPORTED_COMMAND winkey_parmcount:");
+          debug_serial_port->print(F("service_winkey: WINKEY_UNSUPPORTED_COMMAND winkey_parmcount:"));
           debug_serial_port->println(winkey_parmcount);
         #endif //DEBUG_WINKEY
         if (winkey_parmcount == 0) {
           winkey_port_write(0xc0|winkey_sending|winkey_xoff);
           winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
           #ifdef DEBUG_WINKEY
-            debug_serial_port->print("service_winkey: WINKEY_UNSUPPORTED_COMMAND: WINKEY_NO_COMMAND_IN_PROGRESS");
+            debug_serial_port->print(F("service_winkey: WINKEY_UNSUPPORTED_COMMAND: WINKEY_NO_COMMAND_IN_PROGRESS"));
             debug_serial_port->println(winkey_parmcount);
           #endif //DEBUG_WINKEY
         }
@@ -12418,7 +13030,7 @@ void service_winkey(byte action) {
         if (winkey_status > 115) {
           winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
          #ifdef DEBUG_WINKEY
-           debug_serial_port->println("service_winkey: WINKEY_LOAD_SETTINGS_PARM_15 -> WINKEY_NO_COMMAND_IN_PROGRESS");
+           debug_serial_port->println(F("service_winkey: WINKEY_LOAD_SETTINGS_PARM_15 -> WINKEY_NO_COMMAND_IN_PROGRESS"));
          #endif //DEBUG_WINKEY
         }
       }
@@ -12557,25 +13169,25 @@ void service_winkey(byte action) {
           case 0x01:
             winkey_status = WINKEY_POINTER_01_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_POINTER_01_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_POINTER_01_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x02:
             winkey_status = WINKEY_POINTER_02_COMMAND;  // move to new position in append mode
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_POINTER_02_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_POINTER_02_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           case 0x03:
             winkey_status = WINKEY_POINTER_03_COMMAND;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_POINTER_03_COMMAND");
+              debug_serial_port->println(F("service_winkey: WINKEY_POINTER_03_COMMAND"));
             #endif //DEBUG_WINKEY
             break;
           default:
             winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_POINTER_COMMAND -> WINKEY_NO_COMMAND_IN_PROGRESS");
+              debug_serial_port->println(F("service_winkey: WINKEY_POINTER_COMMAND -> WINKEY_NO_COMMAND_IN_PROGRESS"));
             #endif //DEBUG_WINKEY
             break;
         }
@@ -12600,12 +13212,12 @@ void service_winkey(byte action) {
             winkey_status = WINKEY_UNSUPPORTED_COMMAND;
             winkey_parmcount = 1;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: calibrate command (WINKEY_UNSUPPORTED_COMMAND) awaiting 1 parm");
+              debug_serial_port->println(F("service_winkey: calibrate command (WINKEY_UNSUPPORTED_COMMAND) awaiting 1 parm"));
             #endif //DEBUG_WINKEY
             break;  // calibrate command
           case 0x01:
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND 0x01");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND 0x01"));
             #endif //DEBUG_WINKEY
             #ifdef defined(__AVR__) //#ifndef ARDUINO_SAM_DUE
               asm volatile ("jmp 0"); /*wdt_enable(WDTO_30MS); while(1) {};*/
@@ -12625,7 +13237,7 @@ void service_winkey(byte action) {
               winkey_connect_time = millis();
             #endif
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND host open");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND host open"));
             #endif //DEBUG_WINKEY
             boop_beep();
             break;
@@ -12633,7 +13245,7 @@ void service_winkey(byte action) {
             winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
             winkey_host_open = 0;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND host close");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND host close"));
             #endif //DEBUG_WINKEY
             beep_boop();
             #if defined(OPTION_WINKEY_2_SUPPORT) && !defined(OPTION_WINKEY_2_HOST_CLOSE_NO_SERIAL_PORT_RESET)
@@ -12644,39 +13256,39 @@ void service_winkey(byte action) {
           case 0x04:  // echo command
             winkey_status = WINKEY_ADMIN_COMMAND_ECHO;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND_ECHO");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND_ECHO"));
             #endif //DEBUG_WINKEY
             break;
           case 0x05: // paddle A2D
             winkey_port_write(zero);
             winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND paddle A2D");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND paddle A2D"));
             #endif //DEBUG_WINKEY
             break;
           case 0x06: // speed A2D
             winkey_port_write(zero);
             winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND speed A2D");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND speed A2D"));
             #endif //DEBUG_WINKEY
             break;
           case 0x07: // Get values
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND winkey_admin_get_values");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND winkey_admin_get_values"));
             #endif //DEBUG_WINKEY
             winkey_admin_get_values_command();
             winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
             break;
           case 0x08: // reserved
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND 0x08 reserved - WTF?");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND 0x08 reserved - WTF?"));
             #endif //DEBUG_WINKEY
             winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
             break;
           case 0x09: // get cal
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND get cal");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND get cal"));
             #endif //DEBUG_WINKEY
             winkey_port_write(zero);
             winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
@@ -12686,12 +13298,12 @@ void service_winkey(byte action) {
             wk2_mode = 1;
             winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND wk2_mode = 1");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND wk2_mode = 1"));
             #endif //DEBUG_WINKEY
             break;
           case 0x0b: // set wk2 mode
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND wk2_mode = 2");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND wk2_mode = 2"));
             #endif //DEBUG_WINKEY
             beep();
             beep();
@@ -12700,21 +13312,21 @@ void service_winkey(byte action) {
             break;
           case 0x0c: // download EEPPROM 256 bytes
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND winkey_eeprom_download");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND winkey_eeprom_download"));
             #endif //DEBUG_WINKEY
             winkey_eeprom_download();
             winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
             break;
           case 0x0d:
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND upload EEPROM");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND upload EEPROM"));
             #endif //DEBUG_WINKEY
             winkey_status = WINKEY_UNSUPPORTED_COMMAND;  // upload EEPROM 256 bytes
             winkey_parmcount = 256;
             break;
           case 0x0e:
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND WINKEY_SEND_MSG");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND WINKEY_SEND_MSG"));
             #endif //DEBUG_WINKEY
             winkey_status = WINKEY_SEND_MSG;
             break;
@@ -12722,7 +13334,7 @@ void service_winkey(byte action) {
             winkey_status = WINKEY_UNSUPPORTED_COMMAND;
             winkey_parmcount = 1;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND load xmode");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND load xmode"));
             #endif //DEBUG_WINKEY
             break;
           case 0x10: // reserved
@@ -12731,7 +13343,7 @@ void service_winkey(byte action) {
             break;
           case 0x11: // set high baud rate
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND set high baud rate");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND set high baud rate"));
             #endif //DEBUG_WINKEY
             primary_serial_port->end();
             primary_serial_port->begin(9600);
@@ -12739,7 +13351,7 @@ void service_winkey(byte action) {
             break;
           case 0x12: // set low baud rate
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND set low baud rate");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND set low baud rate"));
             #endif //DEBUG_WINKEY
             primary_serial_port->end();
             primary_serial_port->begin(1200);
@@ -12749,14 +13361,14 @@ void service_winkey(byte action) {
           default:
             winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
             #ifdef DEBUG_WINKEY
-              debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND -> WINKEY_NO_COMMAND_IN_PROGRESS");
+              debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND -> WINKEY_NO_COMMAND_IN_PROGRESS"));
             #endif //DEBUG_WINKEY
             break;
           }
       } else {
         if (winkey_status == WINKEY_ADMIN_COMMAND_ECHO) {
           #ifdef DEBUG_WINKEY
-            debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND echoing a byte...");
+            debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND echoing a byte..."));
           #endif //DEBUG_WINKEY
           winkey_port_write(incoming_serial_byte);
           winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
@@ -12765,7 +13377,7 @@ void service_winkey(byte action) {
 
       if (winkey_status == WINKEY_KEYING_COMPENSATION_COMMAND) {
         #ifdef DEBUG_WINKEY
-          debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND WINKEY_KEYING_COMPENSATION_COMMAND byte");
+          debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND WINKEY_KEYING_COMPENSATION_COMMAND byte"));
         #endif //DEBUG_WINKEY
         keying_compensation = incoming_serial_byte;
         winkey_status = WINKEY_NO_COMMAND_IN_PROGRESS;
@@ -12773,7 +13385,7 @@ void service_winkey(byte action) {
 
       if (winkey_status == WINKEY_FIRST_EXTENSION_COMMAND) {
         #ifdef DEBUG_WINKEY
-          debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND WINKEY_FIRST_EXTENSION_COMMAND byte");
+          debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND WINKEY_FIRST_EXTENSION_COMMAND byte"));
         #endif //DEBUG_WINKEY
         first_extension_time = incoming_serial_byte;
         #ifdef DEBUG_WINKEY_PROTOCOL_USING_CW
@@ -12785,12 +13397,12 @@ void service_winkey(byte action) {
       if (winkey_status == WINKEY_PAUSE_COMMAND) {
         if (incoming_serial_byte) {
           #ifdef DEBUG_WINKEY
-            debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND WINKEY_PAUSE_COMMAND pause");
+            debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND WINKEY_PAUSE_COMMAND pause"));
           #endif //DEBUG_WINKEY
           pause_sending_buffer = 1;
         } else {
           #ifdef DEBUG_WINKEY
-            debug_serial_port->println("service_winkey: WINKEY_ADMIN_COMMAND WINKEY_PAUSE_COMMAND unpause");
+            debug_serial_port->println(F("service_winkey: WINKEY_ADMIN_COMMAND WINKEY_PAUSE_COMMAND unpause"));
           #endif //DEBUG_WINKEY
           pause_sending_buffer = 0;
         }
@@ -13456,7 +14068,7 @@ void process_serial_command(PRIMARY_SERIAL_CLS * port_to_use) {
 #ifdef FEATURE_PADDLE_ECHO
 void service_paddle_echo()
 {
-
+// MqttPubString(String TOPIC, String DATA, bool RETAIN)
   #ifdef DEBUG_LOOP
     debug_serial_port->println(F("loop: entering service_paddle_echo"));
   #endif
@@ -13587,7 +14199,7 @@ void service_paddle_echo()
         break;
     }
       #ifdef DEBUG_CW_COMPUTER_KEYBOARD
-        debug_serial_port->print("service_paddle_echo: Keyboard.write: ");
+        debug_serial_port->print(F("service_paddle_echo: Keyboard.write: "));
         debug_serial_port->write(character_to_send);
         debug_serial_port->println();
       #endif //DEBUG_CW_COMPUTER_KEYBOARD
@@ -13676,6 +14288,7 @@ void service_paddle_echo()
       #else  // ! OPTION_PROSIGN_SUPPORT
         if (cli_paddle_echo){
           primary_serial_port->write(byte(convert_cw_number_to_ascii(paddle_echo_buffer)));
+          MqttPubString("cw", String(char(convert_cw_number_to_ascii(paddle_echo_buffer))), false);      // add #OI3 - need enable FEATURE_COMMAND_LINE_INTERFACE + FEATURE_PADDLE_ECHO
           #ifdef FEATURE_COMMAND_LINE_INTERFACE_ON_SECONDARY_PORT
             secondary_serial_port->write(byte(convert_cw_number_to_ascii(paddle_echo_buffer)));
           #endif
@@ -13694,7 +14307,7 @@ void service_paddle_echo()
       if (!no_space){
         Keyboard.write(' ');
         #ifdef DEBUG_CW_COMPUTER_KEYBOARD
-          debug_serial_port->println("service_paddle_echo: Keyboard.write: <space>");
+          debug_serial_port->println(F("service_paddle_echo: Keyboard.write: <space>"));
         #endif //DEBUG_CW_COMPUTER_KEYBOARD
       }
       no_space = 0;
@@ -13709,6 +14322,7 @@ void service_paddle_echo()
     #if defined(FEATURE_SERIAL) && defined(FEATURE_COMMAND_LINE_INTERFACE)
        if (cli_paddle_echo){
          primary_serial_port->write(" ");
+         MqttPubString("cw", " ", false);      // add #OI3 - need enable FEATURE_COMMAND_LINE_INTERFACE + FEATURE_PADDLE_ECHO
 
         #ifdef FEATURE_COMMAND_LINE_INTERFACE_ON_SECONDARY_PORT
           secondary_serial_port->write(" ");
@@ -13984,7 +14598,7 @@ void serial_tune_command (PRIMARY_SERIAL_CLS * port_to_use)
 
   sending_mode = MANUAL_SENDING;
   tx_and_sidetone_key(1);
-  port_to_use->println("Keying tx - press a key to unkey");
+  port_to_use->println(F("Keying tx - press a key to unkey"));
   #ifdef FEATURE_COMMAND_BUTTONS
   while ((port_to_use->available() == 0) && (!analogbuttonread(0))) {}  // keystroke or button0 hit gets us out of here
   #endif
@@ -14302,10 +14916,10 @@ void serial_cw_practice(PRIMARY_SERIAL_CLS * port_to_use){
       port_to_use->read();
     }
 
-    port_to_use->println("CW Practice\n");
-    port_to_use->println("1 - US Callsigns");
-    port_to_use->println("2 - PA QSO Party");
-    port_to_use->println("0 - eXit\n");
+    port_to_use->println(F("CW Practice\n"));
+    port_to_use->println(F("1 - US Callsigns"));
+    port_to_use->println(F("2 - PA QSO Party"));
+    port_to_use->println(F("0 - eXit\n"));
 
     menu_loop2 = 1;
 
@@ -14455,11 +15069,11 @@ void serial_status(PRIMARY_SERIAL_CLS * port_to_use) {
       #ifdef FEATURE_CMOS_SUPER_KEYER_IAMBIC_B_TIMING
         port_to_use->print(F(" / CMOS Super Keyer Timing: O"));
         if (configuration.cmos_super_keyer_iambic_b_timing_on) {
-          port_to_use->print("N ");
+          port_to_use->print(F("N "));
           port_to_use->print(configuration.cmos_super_keyer_iambic_b_timing_percent);
-          port_to_use->print("%");
+          port_to_use->print(F("%"));
         } else {
-         port_to_use->print("FF");
+         port_to_use->print(F("FF"));
         }
       #endif //FEATURE_CMOS_SUPER_KEYER_IAMBIC_B_TIMING
       break;
@@ -14510,7 +15124,7 @@ void serial_status(PRIMARY_SERIAL_CLS * port_to_use) {
   } else {
     port_to_use->print(F("QRSS Mode Activated - Dit Length: "));
     port_to_use->print(qrss_dit_length,DEC);
-    port_to_use->println(" seconds");
+    port_to_use->println(F(" seconds"));
   }
   port_to_use->print(F("Sidetone:"));
   switch (configuration.sidetone_mode) {
@@ -14518,9 +15132,9 @@ void serial_status(PRIMARY_SERIAL_CLS * port_to_use) {
     case SIDETONE_OFF: port_to_use->print(F("OFF")); break;
     case SIDETONE_PADDLE_ONLY: port_to_use->print(F("Paddle Only")); break;
   }
-  port_to_use->print(" ");
+  port_to_use->print(F(" "));
   port_to_use->print(configuration.hz_sidetone,DEC);
-  port_to_use->println(" hz");
+  port_to_use->println(F(" hz"));
   port_to_use->print(F("Dah to dit: "));
   port_to_use->println((float(configuration.dah_to_dit_ratio)/100));
   port_to_use->print(F("Weighting: "));
@@ -14534,28 +15148,28 @@ void serial_status(PRIMARY_SERIAL_CLS * port_to_use) {
     if (configuration.pot_activated != 1) {
       port_to_use->print(F("not "));
     }
-    port_to_use->println("activated)");
+    port_to_use->println(F("activated)"));
   #endif
   #ifdef FEATURE_AUTOSPACE
     port_to_use->print(F("Autospace O"));
     if (configuration.autospace_active) {
-      port_to_use->println("n");
+      port_to_use->println(F("n"));
     } else {
-      port_to_use->println("ff");
+      port_to_use->println(F("ff"));
     }
   #endif
-  port_to_use->print("Wordspace: ");
+  port_to_use->print(F("Wordspace: "));
   port_to_use->println(configuration.length_wordspace,DEC);
-  port_to_use->print("TX: ");
+  port_to_use->print(F("TX: "));
   port_to_use->println(configuration.current_tx);
 
 
   #ifdef FEATURE_QLF
     port_to_use->print(F("QLF: O"));
     if (qlf_active){
-      port_to_use->println("n");
+      port_to_use->println(F("n"));
     } else {
-      port_to_use->println("ff");
+      port_to_use->println(F("ff"));
     }
   #endif //FEATURE_QLF
 
@@ -14780,13 +15394,13 @@ void memorycheck()
 
   unsigned long free = (unsigned long)SP - (unsigned long)HP;
 
-//  port_to_use->print("Heap=");
+//  port_to_use->print(F("Heap="));
 //  port_to_use->println((unsigned long)HP,HEX);
-//  port_to_use->print("Stack=");
+//  port_to_use->print(F("Stack="));
 //  port_to_use->println((unsigned long)SP,HEX);
-//  port_to_use->print("Free Memory = ");
+//  port_to_use->print(F("Free Memory = "));
 //  port_to_use->print((unsigned long)free,HEX);
-//  port_to_use->print("  ");
+//  port_to_use->print(F("  "));
   if (free > 2048) {
     free = 0;
   }
@@ -15687,15 +16301,15 @@ byte play_memory(byte memory_number)
     last_memory_repeat_time = millis();
     #ifdef DEBUG_PLAY_MEMORY
       debug_serial_port->println(F("\nplay_memory: reset last_memory_repeat_time"));
-      debug_serial_port->print("y: ");
+      debug_serial_port->print(F("y: "));
       debug_serial_port->print(y);
-      debug_serial_port->print("\tmemory_number: ");
+      debug_serial_port->print(F("\tmemory_number: "));
       debug_serial_port->print(memory_number);
-      debug_serial_port->print("\tmemory_end: ");
+      debug_serial_port->print(F("\tmemory_end: "));
       debug_serial_port->print(memory_end(memory_number));
-      debug_serial_port->print("\tjump_back_to_y: ");
+      debug_serial_port->print(F("\tjump_back_to_y: "));
       debug_serial_port->print(jump_back_to_y);
-      debug_serial_port->print("\tjump_back_to_memory_number: ");
+      debug_serial_port->print(F("\tjump_back_to_memory_number: "));
       debug_serial_port->println(jump_back_to_memory_number);
     #endif
 
@@ -16216,11 +16830,11 @@ void service_cw_decoder() {
   #ifdef DEBUG_OPTION_CW_DECODER_GOERTZEL_AUDIO_DETECTOR
     static unsigned long last_magnitude_debug_print = 0;
     if ((millis() - last_magnitude_debug_print) > 250){
-      //debug_serial_port->print("service_cw_decoder: cwtonedetector magnitude: ");
+      //debug_serial_port->print(F("service_cw_decoder: cwtonedetector magnitude: "));
       //debug_serial_port->print(cwtonedetector.magnitudelimit_low);
-      //debug_serial_port->print("\t");
+      //debug_serial_port->print(F("\t"));
       debug_serial_port->print(cwtonedetector.magnitudelimit);
-      debug_serial_port->print("\t");
+      debug_serial_port->print(F("\t"));
       debug_serial_port->println(cwtonedetector.magnitude);
       last_magnitude_debug_print = millis();
     }
@@ -16324,9 +16938,9 @@ void service_cw_decoder() {
 
     #ifdef DEBUG_CW_DECODER_WPM
       if (abs(decoder_wpm - last_printed_decoder_wpm) > 0.9) {
-        debug_serial_port->print("<");
+        debug_serial_port->print(F("<"));
         debug_serial_port->print(int(decoder_wpm));
-        debug_serial_port->print(">");
+        debug_serial_port->print(F(">"));
         last_printed_decoder_wpm = decoder_wpm;
       }
     #endif //DEBUG_CW_DECODER_WPM
@@ -16609,7 +17223,7 @@ void initialize_serial_ports(){
     #ifdef DEBUG_AUX_SERIAL_PORT
       debug_port = DEBUG_AUX_SERIAL_PORT;
       debug_serial_port->begin(DEBUG_AUX_SERIAL_PORT_BAUD);
-      debug_serial_port->print("debug port open ");
+      debug_serial_port->print(F("debug port open "));
       debug_serial_port->println(CODE_VERSION);
     #endif //DEBUG_AUX_SERIAL_PORT
 
@@ -16804,9 +17418,9 @@ void KbdRptParser::OnKeyDown(uint8_t mod, uint8_t key)
   #ifdef DEBUG_USB_KEYBOARD
   debug_serial_port->print(F("KbdRptParser::OnKeyDown: mod:"));
   debug_serial_port->print(mod);
-  debug_serial_port->print(" key:");
+  debug_serial_port->print(F(" key:"));
   debug_serial_port->print(key);
-  debug_serial_port->print("\t");
+  debug_serial_port->print(F("\t"));
   debug_serial_port->print((modifier.bmLeftCtrl   == 1) ? "LeftCtrl" : " ");
   debug_serial_port->print((modifier.bmLeftShift  == 1) ? "LeftShift" : " ");
   debug_serial_port->print((modifier.bmLeftAlt    == 1) ? "LeftAlt" : " ");
@@ -16815,7 +17429,7 @@ void KbdRptParser::OnKeyDown(uint8_t mod, uint8_t key)
   debug_serial_port->print((modifier.bmRightShift  == 1) ? "RightShift" : " ");
   debug_serial_port->print((modifier.bmRightAlt    == 1) ? "RightAlt" : " ");
   debug_serial_port->print((modifier.bmRightGUI    == 1) ? "RightGUI" : " ");
-  debug_serial_port->print("\t");
+  debug_serial_port->print(F("\t"));
   PrintHex<uint8_t>(key, 0x80);
   debug_serial_port->println();
   #endif //DEBUG_USB_KEYBOARD
@@ -17491,9 +18105,9 @@ void service_usb(){
 void MouseRptParser::OnMouseMove(MOUSEINFO *mi){
 
     /*
-    debug_serial_port->print("dx=");
+    debug_serial_port->print(F("dx="));
     debug_serial_port->print(mi->dX, DEC);
-    debug_serial_port->print(" dy=");
+    debug_serial_port->print(F(" dy="));
     debug_serial_port->println(mi->dY, DEC);
     */
 
@@ -17704,9 +18318,9 @@ uint8_t read_capacitive_pin(int pinToMeasure) {
   static unsigned long last_cap_paddle_debug = 0;
   if ((millis() - last_cap_paddle_debug) > 250){
     debug_serial_port->flush();
-    debug_serial_port->print("read_capacitive_pin: pin:");
+    debug_serial_port->print(F("read_capacitive_pin: pin:"));
     debug_serial_port->print(pinToMeasure);
-    debug_serial_port->print(" cyc:");
+    debug_serial_port->print(F(" cyc:"));
     debug_serial_port->println(cycles);
     last_cap_paddle_debug = millis();
   }
@@ -17860,12 +18474,12 @@ void service_ptt_interlock(){
         lcd_center_print_timed("PTT Interlock",0,2000);
         #endif //FEATURE_DISPLAY
       }
-        MqttPub("interlock", 0, ptt_interlock_active);    // add for #OI3
+        MqttPubString("interlock", String(ptt_interlock_active), false);    // add for #OI3
     } else {
       if (ptt_interlock_active){
         ptt_interlock_active = 0;
       }
-        MqttPub("interlock", 0, ptt_interlock_active);    // add for #OI3
+        MqttPubString("interlock", String(ptt_interlock_active), false);    // add for #OI3
     }
     last_ptt_interlock_check = millis();
   }
@@ -17886,7 +18500,7 @@ void service_winkey_breakin(){
     winkey_interrupted = 1;
     send_winkey_breakin_byte_flag = 0;
     #ifdef DEBUG_WINKEY
-      debug_serial_port->println("service_winkey_breakin: winkey_interrupted = 1");
+      debug_serial_port->println(F("service_winkey_breakin: winkey_interrupted = 1"));
     #endif
   }
 
@@ -17933,7 +18547,7 @@ void initialize_udp(){
 
     #if defined(DEBUG_UDP)
       if (!udpbegin_result){
-        debug_serial_port->println("initialize_udp: Udp.begin error");
+        debug_serial_port->println(F("initialize_udp: Udp.begin error"));
       }
     #endif
   #endif //FEATURE_UDP
@@ -17997,7 +18611,7 @@ void service_web_server() {
           //store characters to string
           web_server_incoming_string += c;
           #if defined(DEBUG_WEB_SERVER_READS)
-            debug_serial_port->print("service_web_server: read: ");
+            debug_serial_port->print(F("service_web_server: read: "));
             debug_serial_port->print(c);
           #endif //DEBUG_WEB_SERVER_READS
         } else {
@@ -18407,14 +19021,14 @@ void parse_get(String str){
   parse_get_results_index = 0;
 
   #if defined(DEBUG_WEB_PARSE_GET)
-    debug_serial_port->print("parse_get: raw workstring: ");
+    debug_serial_port->print(F("parse_get: raw workstring: "));
     Serial.println(str);
   #endif
 
   workstring = str.substring(str.indexOf("?")+1);
 
   #if defined(DEBUG_WEB_PARSE_GET)
-    debug_serial_port->print("parse_get: workstring: ");
+    debug_serial_port->print(F("parse_get: workstring: "));
     Serial.println(workstring);
   #endif
 
@@ -18429,9 +19043,9 @@ void parse_get(String str){
       workstring = "";
     }
     #if defined(DEBUG_WEB_PARSE_GET)
-      debug_serial_port->print("parse_get: parameter: ");
+      debug_serial_port->print(F("parse_get: parameter: "));
       debug_serial_port->print(parameter);
-      debug_serial_port->print(" value: ");
+      debug_serial_port->print(F(" value: "));
       debug_serial_port->println(value);
     #endif //DEBUG_WEB_PARSE_GET
 
@@ -18441,11 +19055,11 @@ void parse_get(String str){
       parse_get_results[parse_get_results_index].value_long = value.toInt();
 
       // Serial.print(parse_get_results_index);
-      // Serial.print(":");
+      // Serial.print(F(":"));
       // Serial.print(parse_get_results[parse_get_results_index].parameter);
-      // Serial.print(":");
+      // Serial.print(F(":"));
       // Serial.print(parse_get_results[parse_get_results_index].value_string);
-      // Serial.print(":");
+      // Serial.print(F(":"));
       // Serial.print(parse_get_results[parse_get_results_index].value_long);
       // Serial.println("$");
 
@@ -19449,21 +20063,21 @@ void link_key(uint8_t link_key_state){
     if (((millis()-last_link_key_action_time) < FEATURE_INTERNET_LINK_BUFFER_TIME_MS) && (last_link_key_action_time != 0)){
       if (link_key_state){
         #if defined(DEBUG_INTERNET_LINKING_SEND)
-          debug_serial_port->print("link_key: D");
+          debug_serial_port->print(F("link_key: D"));
         #endif //DEBUG_INTERNET_LINKING_SEND
         bytes_to_send[0] = 'D';
         add_to_udp_send_buffer(bytes_to_send,1);
       } else {
         if (buffered_key_down){
           #if defined(DEBUG_INTERNET_LINKING_SEND)
-            debug_serial_port->print("link_key: V");
+            debug_serial_port->print(F("link_key: V"));
           #endif //DEBUG_INTERNET_LINKING_SEND
           bytes_to_send[0] = 'V';
           add_to_udp_send_buffer(bytes_to_send,1);
           buffered_key_down = 0;
         } else {
           #if defined(DEBUG_INTERNET_LINKING_SEND)
-            debug_serial_port->print("link_key: U");
+            debug_serial_port->print(F("link_key: U"));
           #endif //DEBUG_INTERNET_LINKING_SEND
           bytes_to_send[0] = 'U';
           add_to_udp_send_buffer(bytes_to_send,1);
@@ -19548,7 +20162,7 @@ void service_udp_send_buffer(){
             link_send_buffer_bytes[y]++;
           } else {
             #if defined(DEBUG_UDP)
-              debug_serial_port->println("service_udp_send_buffer: link_send_buffer_overflow");
+              debug_serial_port->println(F("service_udp_send_buffer: link_send_buffer_overflow"));
             #endif
           }
         }
@@ -19581,20 +20195,20 @@ void service_udp_send_buffer(){
         udp_write(link_send_buffer[y][x]);
       }
       #if defined(DEBUG_UDP)
-        debug_serial_port->print("\n\rservice_udp_send_buffer: endPacket ");
+        debug_serial_port->print(F("\n\rservice_udp_send_buffer: endPacket "));
         unsigned long beginPacket_start = millis();
       #endif
       int endpacket_result = Udp.endPacket();
       #if defined(DEBUG_UDP)
         unsigned long beginPacket_end = millis();
         if (!endpacket_result){
-          debug_serial_port->print("error");
+          debug_serial_port->print(F("error"));
         } else {
-          debug_serial_port->print("OK");
+          debug_serial_port->print(F("OK"));
         }
-        debug_serial_port->print(" time:");
+        debug_serial_port->print(F(" time:"));
         debug_serial_port->print(beginPacket_end - beginPacket_start);
-        debug_serial_port->println(" mS");
+        debug_serial_port->println(F(" mS"));
       #endif
       link_send_buffer_bytes[y] = 0;
       y = FEATURE_INTERNET_LINK_MAX_LINKS;  // exit after we've process one buffer with bytes
@@ -19617,12 +20231,12 @@ void udp_write(uint8_t byte_to_write){
 
     static char ascii_sent[17] = "";
 
-    debug_serial_port->print(" ");
+    debug_serial_port->print(F(" "));
     if (byte_to_write < 16){
-      debug_serial_port->print("0");
+      debug_serial_port->print(F("0"));
     }
     debug_serial_port->print(byte_to_write,HEX);
-    debug_serial_port->print(" ");
+    debug_serial_port->print(F(" "));
     debug_serial_port->write(byte_to_write);
   #endif //DEBUG_UDP_WRITE
 
@@ -19646,21 +20260,21 @@ void service_udp_receive(){
       #if defined(DEBUG_UDP_PACKET_RECEIVE)
         debug_serial_port->print(F("service_udp_receive: received packet: size "));
         debug_serial_port->print(packet_size);
-        debug_serial_port->print(" from ");
+        debug_serial_port->print(F(" from "));
         IPAddress remote = Udp.remoteIP();
         for (int i = 0; i < 4; i++) {
           debug_serial_port->print(remote[i], DEC);
           if (i < 3) {
-            debug_serial_port->print(".");
+            debug_serial_port->print(F("."));
           }
         }
-        debug_serial_port->print(":");
+        debug_serial_port->print(F(":"));
         debug_serial_port->print(Udp.remotePort());
-        debug_serial_port->print(" contents: ");
+        debug_serial_port->print(F(" contents: "));
         for (int x = 0;x < packet_size;x++){
           debug_serial_port->print(udp_char_receive_packet_buffer[x]);
         }
-        debug_serial_port->println("$");
+        debug_serial_port->println(F("$"));
       #endif //DEBUG_UDP
 
      if (packet_size > FEATURE_UDP_RECEIVE_BUFFER_SIZE){ packet_size = FEATURE_UDP_RECEIVE_BUFFER_SIZE;}
