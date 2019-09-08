@@ -1271,6 +1271,8 @@ unsigned long automatic_sending_interruption_time = 0;
             MEM1 button > oi2.cfg
             MEM2 button > oi3.cfg
             MODE button > oi4.cfg
+          - Menu numbers 6, 11, 12, 13, 14, 15, 16, 22, 26, 27
+            may be change vlaue, after press MODE button
   2019-07 - read mode from Kenwood CAT
   2017-03 - All modified line in original code signed with #OI3
           - Fix Sequencer PTT
@@ -1304,7 +1306,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - RTTY RX decoder not work after tx mem or change mode
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20190830";
+const char* REV = "20190909";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -1322,7 +1324,7 @@ bool GpsTime         = 1;          // External GPS via ACC [FGPMMOPA6H chip] htt
                                       // IP set manually below SOxQTH variable
 
 // FEATURES AND OPTIONS
-int DebuggingOutput  = 0;          // 0 = OFF, 1 - Serial0 KEY, 2 - Serial2 CAT, 3 - UDP, 4 - MQTT
+unsigned int DebuggingOutput  = 0;          // 0 = OFF, 1 - Serial0 KEY, 2 - Serial2 CAT, 3 - UDP, 4 - MQTT
 long DebuggingTimer;
 bool K3NG_KEYER      = 1;          // enable CW keyer
 bool FSK_TX          = 1;          // enable RTTY keying
@@ -1396,16 +1398,16 @@ bool BUTTON_BEEP        = 1;          // Mode button beep enable
 
 bool InterlockEnable    = true;      // true = interlock, false = ptt in
 bool PttInStatus        = false;
-int SEQUENCERlead       = 0;          // SEQUENCER output lead delay ms between SEQ-->PA
-int SEQUENCERtail       = 0;          // SEQUENCER output tail delay ms          :    :                      :     PA-->SEQ
-int PAlead              = 0;         // PA output lead delay ms between         :    PA-->TRX               :     :    :
-int PAtail              = 0;        // PA output tail delay ms                 :    :    :                 TRX-->PA   :
-int PTTlead             = 0;         // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
-int PTTtail             = 0;        // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
-/*                     |                                                        ^    ^    ^            ^    ^     ^
-                    Master                                  SEQUENCERlead ______|    |    |            |    |     |_____ SEQUENCERtail
-                    for CW                                         PAlead ___________|    |            |    |___________ PAtail
-                   tail delay                                     PTTlead ________________|            |________________ PTTtail
+unsigned int SEQUENCERlead       = 0;        // SEQUENCER output lead delay ms between SEQ-->PA
+unsigned int SEQUENCERtail       = 0;        // SEQUENCER output tail delay ms          :    :                      :     PA-->SEQ
+unsigned int PAlead              = 0;        // PA output lead delay ms between         :    PA-->TRX               :     :    :
+unsigned int PAtail              = 0;        // PA output tail delay ms                 :    :    :                 TRX-->PA   :
+unsigned int PTTlead             = 0;        // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
+unsigned int PTTtail             = 0;        // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
+        /*                     |                                                        ^    ^    ^            ^    ^     ^
+                            Master                                  SEQUENCERlead ______|    |    |            |    |     |_____ SEQUENCERtail
+                            for CW                                         PAlead ___________|    |            |    |___________ PAtail
+                           tail delay                                     PTTlead ________________|            |________________ PTTtail
                                       */
                                       // 1 = pin8 at DB25 | 2 = pin20 at DB25 | 3 = pin22 at DB25
  int PTTmodeCW          = 1;          // [1-3] How PTT TRX output use in mode CW
@@ -1809,7 +1811,7 @@ float DCinVoltage;
 float PrevDCinVoltage;
 int i = 0;
 int tmp = 0;
-bool LcdNeedRefresh = 0;
+bool LcdNeedRefresh=false;
 
 // int Loop[3] = {MODE_AFTER_POWER_UP, MENU_AFTER_POWER_UP, MENU_AFTER_POWER_UP};     //  Mode, Menu, previous Menu
 int ActualModePrev = MODE_AFTER_POWER_UP;
@@ -1847,12 +1849,12 @@ char* MenuTree[28]= {
   "BAND",            //  8
   "ANT",             //  9
   "FSKBd",           // 10
-  "SEQlead",         // 11
-  "SEQtail",         // 12
-  "PAlead",          // 13
-  "PAtail",          // 14
-  "PTTlead",         // 15
-  "PTTtail",         // 16
+  "SEQl",         // 11
+  "SEQt",         // 12
+  "PAl",          // 13
+  "PAt",          // 14
+  "PTTl",         // 15
+  "PTTt",         // 16
   "",                // 17  MODE fullname
   "A",               // 18  Switch bankA - eight independent ON/OFF keyboard button
   "B",               // 19  Switch bankB - one from eight keyboard button
@@ -1868,9 +1870,9 @@ char* MenuTree[28]= {
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
 
-byte ModeLastButtonState = HIGH;
-byte ModeDebouncedSignal = HIGH;
-byte ModeMenuStatus = LOW;  // LOW-MODE | HIGH MENU
+bool ModeLastButtonState = true;
+bool ModeDebouncedSignal = true;
+int ModeMenuStatus = 0;  // 0-MODE | 1-MENU | 2-SET
 byte Ptt232Active = LOW;
 byte FootSwChange = LOW;
 byte InterlockFromUdpActive = LOW;
@@ -2346,7 +2348,7 @@ void GpsPpsInterrupt(){    // run from interrupt
     }
     Timeout[9][0] = millis();
     if(ActualMenu==23 || ActualMenu==24 ){
-      LcdNeedRefresh=1;
+      LcdNeedRefresh=true;
     }
   }else{
     Serial3.read(); // clear rx buffer
@@ -2454,7 +2456,7 @@ void AccKeyboardShift(){    // run from interrupt
       shiftOut(ShiftOutDataPin, ShiftOutClockPin, MSBFIRST, rxShiftInButton[0]);    // bank0
       digitalWrite(ShiftOutLatchPin, HIGH);    // switch to output pin
     }
-    LcdNeedRefresh = 1;
+    LcdNeedRefresh=true;
   }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -2487,21 +2489,77 @@ void InterruptON(int keyb, int enc, int gps, int interlock){
 //-------------------------------------------------------------------------------------------------------
 // ENCODER
 void MenuEncoder(){
-  if(ActualMenu!=20 || ModeMenuStatus == HIGH || DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]==0){   // for menu 20 activate interrupt encoder
+  if(ActualMenu!=20 || ModeMenuStatus > 0 || DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]==0){   // for menu 20 activate interrupt encoder
     if(digitalRead(encB) == LOW && EncPrev == 1){
-      if(digitalRead(encA) == LOW){
-        ActualMenu++;
+      if(ModeMenuStatus<=1){
+        if(digitalRead(encA) == LOW){
+          ActualMenu++;
           if(ActualMenu > MenuTreeSize-1){
             ActualMenu=0;
           }
-      }else{
-        ActualMenu--;
+        }else{
+          ActualMenu--;
           if(ActualMenu < 0){
             ActualMenu=MenuTreeSize-1;
           }
+        }
+        EncPrev=0;
       }
-      EncPrev=0;
-      LcdNeedRefresh = 1;
+
+      if(ModeMenuStatus==2){
+        int step = 1;
+        if(analogRead(MEM)<210){
+          step = 10;
+        }
+        switch (ActualMenu) {
+          case 6:{ // CI-V address
+            if(digitalRead(encA)==LOW){CIV_ADRESS+=step;}else{CIV_ADRESS-=step;};
+          break;
+          }
+          case 11:{ // SEQ Lead
+            if(digitalRead(encA)==LOW){SEQUENCERlead+=step;}else{SEQUENCERlead-=step;};
+          break;
+          }
+          case 12:{ // SEQ tail
+            if(digitalRead(encA)==LOW){SEQUENCERtail+=step;}else{SEQUENCERtail-=step;};
+          break;
+          }
+          case 13:{ // PA Lead
+            if(digitalRead(encA)==LOW){PAlead+=step;}else{PAlead-=step;};
+          break;
+          }
+          case 14:{ // PA tail
+            if(digitalRead(encA)==LOW){PAtail+=step;}else{PAtail-=step;};
+          break;
+          }
+          case 15:{ // PTT Lead
+            if(digitalRead(encA)==LOW){PTTlead+=step;}else{PTTlead-=step;};
+          break;
+          }
+          case 16:{ // PTT tail
+            if(digitalRead(encA)==LOW){PTTtail+=step;}else{PTTtail-=step;};
+          break;
+          }
+          case 22:{ // Network ID
+            if(digitalRead(encA)==LOW){NET_ID+=step;}else{NET_ID-=step;};
+          break;
+          }
+          case 26:{ // Debug on Serial2
+            if(digitalRead(encA)==LOW){DebuggingOutput+=step;}else{DebuggingOutput-=step;};
+            if(DebuggingOutput>4){
+              DebuggingOutput=0;
+            }
+          break;
+          }
+          case 27:{ // PTTin
+            if(digitalRead(encA)==LOW){InterlockEnable+=step;}else{InterlockEnable-=step;};
+          break;
+          }
+
+        }
+        EncPrev=0;
+      }
+      LcdNeedRefresh=true;
     }else  if(digitalRead(encB) == HIGH && EncPrev == 0){
       EncPrev=1;
     }
@@ -2510,7 +2568,7 @@ void MenuEncoder(){
 //-------------------------------------------------------------------------------------------------------
 // ToDo: udp send only if IpSwitchEncoder variable change
 void EncoderInterrupt(){
-  if(ActualMenu==20 && DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0 && SequencerLevel == 0 && ModeMenuStatus == LOW && DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0){       // if detect IP Switch for this band and PTT OFF
+  if(ActualMenu==20 && DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0 && SequencerLevel == 0 && ModeMenuStatus == 0 && DetectedRemoteSw[BandToRemoteSwitchID[BAND]+8][4]!=0){       // if detect IP Switch for this band and PTT OFF
     // int IpSwBankCrange[8]= {
     // int IpSwitchEncoder;
     // byte IpSwitchBankC[2];
@@ -2551,7 +2609,7 @@ void EncoderInterrupt(){
 
     // MQTT send
     MqttPubString("IpSWEncoder", String(IpSwitchEncoder), false);
-    LcdNeedRefresh=1;
+    LcdNeedRefresh=true;
   }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -2811,18 +2869,18 @@ void AfterMQTTconnect(){
   }
 }
 //-------------------------------------------------------------------------------------------------------
-void OpenInterfaceInterlock(){
+void OpenInterfaceInterlock(){      // activate from interrupt
 
   if(InterlockEnable==true){   // interlock
     if (digitalRead(INTERLOCK) == ptt_interlock_active && InterlockFromUdpActive == LOW) {   // if change and not active from UDP
       ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
       if(ptt_interlock_active == 1  && SequencerLevel != 0){
-        ptt_low(0);
+        ptt_low(0,1);
         send_buffer_bytes=0;
       }
       MqttPubString("interlock", String(ptt_interlock_active), false);
       Debugging("Interlock-" + String(ptt_interlock_active) + " " + String(millis()-DebuggingTimer));
-      LcdNeedRefresh = 1;
+      LcdNeedRefresh=true;
     }
 
   }else{        // Ptt in
@@ -2834,7 +2892,7 @@ void OpenInterfaceInterlock(){
       Debugging("PTTin-1 "+String(millis()-DebuggingTimer));
     }else{
       PttInStatus=false;
-      ptt_low(PTTmodeCW);
+      ptt_low(PTTmodeCW,2);
       Debugging("PTTin-0 "+String(millis()-DebuggingTimer));
     }
   }
@@ -2900,7 +2958,7 @@ void ptt_high(int PTToutput){
   }
 }
 //-------------------------------------------------------------------------------------------------------
-void ptt_low(int PTToutput){
+void ptt_low(int PTToutput, int debug){
   switch (PTToutput) {
     case 0:{ // PTT-x
       PTT_tail_timeout[0][0] = millis(); // set time mark PTT 1
@@ -2925,7 +2983,7 @@ void ptt_low(int PTToutput){
     break;
     }
   }
-  Debugging("PTT"+String(PTToutput)+"-to L "+String(millis()-DebuggingTimer)+" "+String(send_buffer_bytes));
+  Debugging("PTT"+String(PTToutput)+"-to L "+String(millis()-DebuggingTimer)+" "+String(send_buffer_bytes)+" "+String(debug));
 }
 //-------------------------------------------------------------------------------------------------------
 /*
@@ -2943,7 +3001,7 @@ void check_ptt_low(){
   if(SequencerLevel != 0 && PttInStatus==false){ // if Sequencer on
     switch (SequencerLevel) {
       case 1:{ // PTT-1
-        if (millis() - PTT_tail_timeout[0][0] > PTT_tail_timeout[0][1] && send_buffer_bytes==0){
+        if (millis() - PTT_tail_timeout[0][0] > PTT_tail_timeout[0][1] && send_buffer_bytes==0 && being_sent==0 ){
           digitalWrite (PTT1, LOW);
           SequencerLevel = 4;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
@@ -3058,7 +3116,7 @@ void TxCwAtUTC(){
     send_char(toUpperCase(packetBuffer[10+tmp]),KEYER_NORMAL);
     tmp++;
   }
-  ptt_low(PTTmodeCW);
+  ptt_low(PTTmodeCW,3);
   Debugging(String(packetBuffer)+" | TxTimeMillis "+String(TxTimeMillis, HEX)+" | B4TxTimer "+String(B4TxTimer));
 }
 
@@ -3180,6 +3238,7 @@ if (MQTT_ENABLE == true && MQTT_LOGIN == true){
 
 bool mqttReconnect() {
   if (mqttClient.connect(mac)) {
+    InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     IPAddress IPlocalAddr = Ethernet.localIP();                           // get
     String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
     MqttPubString("IP", IPlocalAddrString, true);
@@ -3265,13 +3324,14 @@ bool mqttReconnect() {
       }
 
     }
+    InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
   }
   return mqttClient.connected();
 }
 
 //------------------------------------------------------------------------------------
 void MqttRx(char *topic, byte *payload, unsigned int length) {
-
+  InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
   String CheckTopicBase; // = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/";
   // const char *cstr = CheckTopic.c_str();
   // if (strcmp(topic, cstr)==0){
@@ -3296,7 +3356,7 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
           // Debugging(String(i)+"-"+p[i]);
         }
       }
-      ptt_low(PTTmodeCW);
+      ptt_low(PTTmodeCW,4);
     }
   }
 
@@ -3366,7 +3426,7 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
       // }
     // }
   }
-
+  InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
 } // MqttRx END
 
   // copy payload to a static string
@@ -3680,7 +3740,7 @@ void IncomingUDP(){
               Debugging(String(i)+"-"+String(packetBuffer[i], HEX)+" "+millis());
             }
           }
-          ptt_low(PTTmodeCW);
+          ptt_low(PTTmodeCW,5);
         }
       }
       memset(packetBuffer, 0, sizeof(packetBuffer));   // if mode no FSK or after TX, clear Buffer
@@ -3775,7 +3835,7 @@ void IncomingUDP(){
         if(packetBuffer[2] == '1'){
           ptt_interlock_active = B00001;
           if(SequencerLevel != 0){   // if any PTT active
-            ptt_low(0);
+            ptt_low(0,6);
           }
           InterlockFromUdpActive = HIGH;
         }else if(packetBuffer[2] == '0'){
@@ -3783,7 +3843,7 @@ void IncomingUDP(){
           InterlockFromUdpActive = LOW;
         }
         MqttPubString("interlock", String(ptt_interlock_active), false);
-        LcdNeedRefresh = 1;
+        LcdNeedRefresh=true;
       }
 
       //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -3793,7 +3853,7 @@ void IncomingUDP(){
           if(packetBuffer[6] == 1){     // if another OI in network PTT 1
             ptt_interlock_active = B00001;
             if(SequencerLevel != 0){   // if any PTT active
-              ptt_low(0);
+              ptt_low(0,7);
             }
             InterlockFromUdpActive = HIGH;
           }else if(packetBuffer[6] == 0){
@@ -3801,7 +3861,7 @@ void IncomingUDP(){
             InterlockFromUdpActive = LOW;
           }
           MqttPubString("interlock", String(ptt_interlock_active), false);
-          LcdNeedRefresh = 1;
+          LcdNeedRefresh=true;
         }
       }
 
@@ -4008,6 +4068,7 @@ void Debugging(String StringForDebug){
     }
     // UDP IP
     if(DebuggingOutput==3 && EnableEthernet==true && EthLinkStatus==1){
+      InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
       DebuggingIP = ~Ethernet.subnetMask() | Ethernet.gatewayIP();
       UdpCommand.beginPacket(DebuggingIP, DebuggingPort);
       // UdpCommand.beginMulticast(UdpCommand.BroadcastIP(), BroadcastPort, ETH.localIP()).
@@ -4016,6 +4077,7 @@ void Debugging(String StringForDebug){
         UdpCommand.print(StringForDebug);
         UdpCommand.print(F(";"));
       UdpCommand.endPacket();
+      InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
     }
     // MQTT
     if(DebuggingOutput==4){
@@ -4023,20 +4085,7 @@ void Debugging(String StringForDebug){
     }
   }
 }
-//-------------------------------------------------------------------------------------------------------
 
-void Debuggingln(){
-  if(DebuggingOutput!=0){
-    // Serial0 KEY
-    if(DebuggingOutput==1){
-      Serial.println();
-    }
-    // Serial2 CAT
-    if(DebuggingOutput==2){
-      Serial2.println();
-    }
-  }
-}
 //-------------------------------------------------------------------------------------------------------
 void SendBroadcastUdp(){
   if(EnableEthernet==1 && EthLinkStatus==1){
@@ -4106,20 +4155,19 @@ void MqttPubString_old(String path, String character){
 }
 //-----------------------------------------------------------------------------------
 void MqttPubString(String TOPIC, String DATA, bool RETAIN){
-  //  prusa/prusaqc/he-mini-tester/1/test-report
-  // TesterName
-  //example: {"sn":"","timestamp":"240010","msg_id":"0","fn_idx":"0","fn":"","err_msg":"","err_code":"35","test_status":"0"}
   char charbuf[50];
    memcpy( charbuf, mac, 6);
    charbuf[6] = 0;
   // InterruptON(0,0,0); // keyb, enc, gps
   if(EnableEthernet==1 && MQTT_ENABLE==1 && EthLinkStatus==1 && mqttClient.connected()==true){
+    InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     if (mqttClient.connect(charbuf)) {
       String path = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/" + TOPIC;
       path.toCharArray( mqttPath, 50 );
       DATA.toCharArray( mqttTX, 50 );
       mqttClient.publish(mqttPath, mqttTX, RETAIN);
     }
+    InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
   }
   // InterruptON(1,1,1); // keyb, enc, gps
 }
@@ -4145,7 +4193,7 @@ void DCinMeasure(){
 }
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceLCD(){    // LCD
-    if (millis() - Timeout[0][0] > (Timeout[0][1]) || LcdNeedRefresh == 1){// || (ActualMenu==20 && millis() - (Timeout[0][0]/2) > (Timeout[0][1]))){   // menu 20 with 1/3 refresh delay
+    if (millis() - Timeout[0][0] > (Timeout[0][1]) || LcdNeedRefresh==true){// || (ActualMenu==20 && millis() - (Timeout[0][0]/2) > (Timeout[0][1]))){   // menu 20 with 1/3 refresh delay
       // micro SD
       lcd.setCursor(15, 1);
       if(ptt_interlock_active == 1){
@@ -4166,25 +4214,27 @@ void OpenInterfaceLCD(){    // LCD
       Timeout[0][0] = millis();                      // set time mark
 
       // MODE
-        lcd.setCursor(11, 1);
-      if(ModeMenuStatus == LOW){        // Mode
-        lcd.print(modeLCD[ActualMode][0]);
-      }else{                            // Menu
-        lcd.print(F(" <"));
+      lcd.setCursor(11, 1);
+      switch (ModeMenuStatus) {
+        case 0:
+          lcd.print(modeLCD[ActualMode][0]);
+        break;
 
-//        if(digitalRead(ETHINST)==LOW){
-//          lcd.setCursor(0, 1);
-//          lcd.write(byte(5));               // ETH
-//        }else{
-//          lcd.setCursor(12, 1);
-//        }
-        if(ActualMenu<10){
-          lcd.print(F("0"));
-        }
-        lcd.print(ActualMenu);
+        case 1:
+          lcd.print(F(" <"));
+          if(ActualMenu<10){
+            lcd.print(F("0"));
+          }
+          lcd.print(ActualMenu);
+        break;
+
+        case 2:
+          lcd.print(F(" <+-"));
+        break;
       }
-      if (LcdNeedRefresh == 1){
-        LcdNeedRefresh = 0;
+
+      if (LcdNeedRefresh==true){
+        LcdNeedRefresh=false;
       }
     }
 }
@@ -4540,7 +4590,7 @@ void MenuToLCD(int nr){
     }
 
   }
-  if(ModeMenuStatus == LOW){        // Mode
+  if(ModeMenuStatus == 0){        // Mode
     CulumnPositionEnd = 11;
   }else{
     CulumnPositionEnd = 12;
@@ -4566,12 +4616,12 @@ String PrintByte(byte ByteToPrint){
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceMENUtimeout(){
   if(PreviousMenu != ActualMenu){
-    ModeMenuStatus = HIGH;          // Menu
+    ModeMenuStatus = 1;          // Menu
     PreviousMenu = ActualMenu;
     Timeout[1][0] = millis();                      // set time mark
   }
-  if (millis() - Timeout[1][0] > (Timeout[1][1])){
-    ModeMenuStatus = LOW;         // Mode
+  if (millis()-Timeout[1][0] > (Timeout[1][1]) && ModeMenuStatus!=2 ){
+    ModeMenuStatus = 0;         // Mode
   }
 }
 //-------------------------------------------------------------------------------------------------------
@@ -4582,18 +4632,18 @@ void OpenInterfaceMENU(){
           ModeLastButtonState = !ModeLastButtonState;
       }
       if ((millis() - Timeout[5][0]) > Timeout[5][1]) {      // over deobounce timer
-        if(digitalRead(MENU) == LOW && ModeDebouncedSignal == HIGH){
+        if(digitalRead(MENU) == LOW && ModeDebouncedSignal==true){
           Timeout[6][0] = millis();                          // reset true press timer
-          ModeDebouncedSignal = LOW;                              // flip-flop
+          ModeDebouncedSignal=false;                              // flip-flop
         }
-        if(digitalRead(MENU) == HIGH && ModeDebouncedSignal == LOW){
-          ModeDebouncedSignal = HIGH;                             // flip-flop
+        if(digitalRead(MENU) == HIGH && ModeDebouncedSignal==false){
+          ModeDebouncedSignal = true;                             // flip-flop
           if((millis() - Timeout[6][0]) < Timeout[6][1]){    // short detect
-            if(ModeMenuStatus == LOW){                       // if MENU disable, MODE active
+            if(ModeMenuStatus == 0){                       // if MENU disable, MODE active
               if (ptt_interlock_active == 1 && InterlockFromUdpActive == HIGH) {   // if UDP Interlock ON
                 ptt_interlock_active = B00000;                            // manual UDP interlock OFF
                   MqttPubString("interlock", String(ptt_interlock_active), false);
-                  LcdNeedRefresh = 1;
+                  LcdNeedRefresh=true;
               }else{
                 // if(BAND_DECODER_IN==2 && ActualMode==2){ // kenwood && ssb > switch between fsk/dig
                 //
@@ -4609,16 +4659,28 @@ void OpenInterfaceMENU(){
                   }
                 // }
               } // end if UDP Interlock ON
-            }else{ // menu enable
-              ActualMenu++;
-              if(ActualMenu > MenuTreeSize-1){
-                ActualMenu=0;
+            }else{ // menu/set switch
+              if(ModeMenuStatus==1){
+                ModeMenuStatus=2;
+              }else if(ModeMenuStatus==2){
+                ModeMenuStatus=1;
+                Timeout[6][0] = millis();
               }
+              LcdNeedRefresh=true;
+              // ActualMenu++;
+              // if(ActualMenu > MenuTreeSize-1){
+              //   ActualMenu=0;
+              // }
             }
             TON(1);
           }else{                                            // Long detect
-            ModeMenuStatus = !ModeMenuStatus;               // MENU status
-            if(ModeMenuStatus == HIGH){                     // if Menu
+            // ModeMenuStatus = !ModeMenuStatus;               // MENU status
+            if(ModeMenuStatus==0){
+              ModeMenuStatus = 1;               // MENU status
+            }else{
+              ModeMenuStatus = 0;
+            }
+            if(ModeMenuStatus == 1){                     // if Menu
               Timeout[1][0] = millis();                      // set time mark
             }
             TON(0);
@@ -4687,7 +4749,7 @@ void OpenInterfaceMODE(){
           Ptt232Active = HIGH;
         }
       }else if(digitalRead(PTT232)==LOW && Ptt232Active == HIGH){       // only if activate from PTT232
-        ptt_low(PTTmodeCW);
+        ptt_low(PTTmodeCW,8);
         Ptt232Active = LOW;
       }
       if (K3NG_KEYER == true){
@@ -4704,7 +4766,7 @@ void OpenInterfaceMODE(){
         }
       }else{
         if(FootSwChange != 0){
-          ptt_low(PTTmodeSSB);
+          ptt_low(PTTmodeSSB,9);
           FootSwChange = 0;
             MqttPubString("footsw", "0", false);
         }
@@ -4726,7 +4788,7 @@ void OpenInterfaceMODE(){
         }
       }else if(digitalRead(PTT232)==LOW && Ptt232Active == HIGH){       // only if activate from PTT232
         Ptt232Active = LOW;
-        ptt_low(PTTmodeFSK);
+        ptt_low(PTTmodeFSK,10);
       }
       MenuEncoder();
     break;
@@ -4747,7 +4809,7 @@ void OpenInterfaceMODE(){
         }
       }else if(digitalRead(PTT232)==LOW && Ptt232Active == HIGH){       // only if activate from PTT232
         Ptt232Active = LOW;
-        ptt_low(PTTmodeDIGI);
+        ptt_low(PTTmodeDIGI,11);
       }
       MenuEncoder();
     break;
@@ -4851,7 +4913,7 @@ void FSKmemoryTX(int memory){
     sendFsk();
     delay(5);
   }
-  ptt_low(PTTmodeFSK);
+  ptt_low(PTTmodeFSK,12);
   if (SERIAL_FSK_TX_ECHO == true){
       Serial.println();
   }
@@ -4924,7 +4986,7 @@ void Serial2FSK(){
             delay(5);
         }
         // ch = ' '; Serial.print(ch); chTable(); sendFsk();   // Space after sending
-        ptt_low(PTTmodeFSK);
+        ptt_low(PTTmodeFSK,13);
         if (SERIAL_FSK_TX_ECHO == true){
             Serial.println();
         }
@@ -5755,7 +5817,7 @@ void K3NG_key()                                                      // changed 
     #endif //FEATURE_POTENTIOMETER
 
     #ifdef FEATURE_ROTARY_ENCODER
-      if(ModeMenuStatus == HIGH){                     // if Menu                        ___
+      if(ModeMenuStatus > 0){                         // if Menu                        ___
         MenuEncoder();                                // activate Menu encoder             |
       }else if(ActualMenu!=20){                       // else                              | Modified for
         check_rotary_encoder();                       // CW keyer encoder (original line)  | #OI3
@@ -8640,7 +8702,7 @@ void ptt_unkey()
 {
   if (ptt_line_activated) {
     if (configuration.current_ptt_line) {
-      ptt_low(PTTmodeCW);                                              //  add #OI3
+      ptt_low(PTTmodeCW,14);                                              //  add #OI3
       // digitalWrite (configuration.current_ptt_line, LOW);  //  disable #OI3
       #if defined(OPTION_WINKEY_2_SUPPORT) && defined(FEATURE_WINKEY_EMULATION)
       if ((wk2_both_tx_activated) && (ptt_tx_2)) {

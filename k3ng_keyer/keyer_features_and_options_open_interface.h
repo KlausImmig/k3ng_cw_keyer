@@ -4,8 +4,8 @@
 // FEATURES add more bytes to the compiled binary, OPTIONS change code behavior
 
 // need for send CW transmit to MQTT
-#define FEATURE_COMMAND_LINE_INTERFACE        // (this no longer requires FEATURE_SERIAL)
-#define FEATURE_PADDLE_ECHO
+// #define FEATURE_COMMAND_LINE_INTERFACE        // (this no longer requires FEATURE_SERIAL)
+// #define FEATURE_PADDLE_ECHO
 
 #define FEATURE_COMMAND_BUTTONS
 #define FEATURE_MEMORIES
