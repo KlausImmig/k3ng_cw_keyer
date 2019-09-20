@@ -1,7 +1,6 @@
-Last stable commit [from 17 Apr](https://github.com/ok1hra/k3ng_cw_keyer/commits/)
-
 # Open Interface III
 Arduino firmware modified for Open Interface III hardware - based on **K3NG Arduino CW Keyer, which in addition includes:**
+![OI3](https://remoteqth.com/img/slide-open-interface-3-01.png)
 - **Switch MODE -** preset board for each mode separately
 - **MENU -** show many actual value and firmware preset
 - **Band decoder -** sniffing CAT or generate own request for read frequency, with BCD (IP in future) output
