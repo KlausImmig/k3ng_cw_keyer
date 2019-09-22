@@ -1303,7 +1303,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - RTTY RX decoder not work after tx mem or change mode
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20190920";
+const char* REV = "20190922";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -3087,9 +3087,9 @@ void OpenInterfaceSequencer(){
       // if( PttActive==true && millis()-LastSeqChange>SEQUENCERlead ){
       if( PttActive==true ){
         Debugging("seq0");
-        delay(SEQUENCERlead);
         digitalWrite (SEQUENCER, HIGH);  // SEQUENCER
         LastSeqChange=millis();
+        delay(SEQUENCERlead);
         if(DebuggingOutput!=0){
           DebuggingTimer=millis();
         }
@@ -3103,9 +3103,9 @@ void OpenInterfaceSequencer(){
     case 5:{ // PA
       // if( PttActive==true && millis()-LastSeqChange>PAlead ){
       if( PttActive==true ){
-        delay(PAlead);
         digitalWrite (PTTPA, HIGH);      // PTT-PA
         LastSeqChange=millis();
+        delay(PAlead);
         Debugging("PTTpa-H "+String(millis()-DebuggingTimer));
         SequencerLevel=4;
         MqttPubString("sequencer", String(SequencerLevel), false);
@@ -3123,9 +3123,9 @@ void OpenInterfaceSequencer(){
     case 4:{ // PTT-123
       // if( PttActive==true && millis()-LastSeqChange>PTTlead ){
       if( PttActive==true ){
-        delay(PTTlead);
         digitalWrite (PTTpin[PTTout], HIGH);      // PTT-123
         LastSeqChange=millis();
+        delay(PTTlead);
         Debugging("PTT"+String(PTTout)+"-H "+String(millis()-DebuggingTimer));
         SequencerLevel=PTTout;
         MqttPubString("sequencer", String(SequencerLevel), false);
