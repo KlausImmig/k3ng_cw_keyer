@@ -1303,7 +1303,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - RTTY RX decoder not work after tx mem or change mode
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20190922";
+const char* REV = "20190924";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -1806,7 +1806,7 @@ byte SequencerLevel = 0;   // 0 = off, 1-2-3 = PTT1-2-3, 4 = PA, 5 = SEQ
   const int ACC17 = A9;
   const int ACC19 = A11;    // if define Icom ACC voltage input
 #endif
-const int PTTpin[3] = {PTT1,PTT2,PTT3};
+const int PTTpin[4] = {0,PTT1,PTT2,PTT3};
 
 // SETTINGS
 #include <math.h>
@@ -3095,7 +3095,7 @@ void OpenInterfaceSequencer(){
         }
         Debugging("PTTseq-H "+String(millis()-DebuggingTimer));
         SequencerLevel=5;
-        MqttPubString("sequencer", String(SequencerLevel), false);
+        // MqttPubString("sequencer", String(SequencerLevel), false);
       }
       break;
     }
@@ -3108,14 +3108,14 @@ void OpenInterfaceSequencer(){
         delay(PAlead);
         Debugging("PTTpa-H "+String(millis()-DebuggingTimer));
         SequencerLevel=4;
-        MqttPubString("sequencer", String(SequencerLevel), false);
+        // MqttPubString("sequencer", String(SequencerLevel), false);
       }
       if( PttActive==false && millis()-LastSeqChange>SEQUENCERtail ){
         digitalWrite (SEQUENCER, LOW);      // SEQUENCER
         LastSeqChange=millis();
         Debugging("PTTseq-L "+String(millis()-DebuggingTimer));
         SequencerLevel=0;
-        MqttPubString("sequencer", String(SequencerLevel), false);
+        // MqttPubString("sequencer", String(SequencerLevel), false);
       }
       break;
     }
@@ -3128,14 +3128,14 @@ void OpenInterfaceSequencer(){
         delay(PTTlead);
         Debugging("PTT"+String(PTTout)+"-H "+String(millis()-DebuggingTimer));
         SequencerLevel=PTTout;
-        MqttPubString("sequencer", String(SequencerLevel), false);
+        // MqttPubString("sequencer", String(SequencerLevel), false);
       }
       if( PttActive==false && millis()-LastSeqChange>PAtail ){
         digitalWrite (PTTPA, LOW);      // PTT-PA
         LastSeqChange=millis();
         Debugging("PTTpa-L "+String(millis()-DebuggingTimer));
         SequencerLevel=5;
-        MqttPubString("sequencer", String(SequencerLevel), false);
+        // MqttPubString("sequencer", String(SequencerLevel), false);
       }
       break;
     }
@@ -3149,13 +3149,13 @@ void OpenInterfaceSequencer(){
           LastSeqChange=millis();
           Debugging("PTT"+String(PTTout)+"-L "+String(millis()-DebuggingTimer));
           SequencerLevel=4;
-          MqttPubString("sequencer", String(SequencerLevel), false);
+          // MqttPubString("sequencer", String(SequencerLevel), false);
         }else if(PTTout==1 && send_buffer_bytes==0 && being_sent==0 ){
           digitalWrite (PTTpin[PTTout], LOW);      // PTT-1
           LastSeqChange=millis();
           Debugging("PTT"+String(PTTout)+"-L "+String(millis()-DebuggingTimer));
           SequencerLevel=4;
-          MqttPubString("sequencer", String(SequencerLevel), false);
+          // MqttPubString("sequencer", String(SequencerLevel), false);
         }
       }
       break;
