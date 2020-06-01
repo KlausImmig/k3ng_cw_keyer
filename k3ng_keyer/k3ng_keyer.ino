@@ -1261,6 +1261,8 @@ unsigned long automatic_sending_interruption_time = 0;
 
   Changelog:
   ----------
+  2020-06 - show IP in menu 29-30
+          - CAT disable if PTT ON
   2019-09 - Sequencer code complete redesign
           - add menu 28 - select PTT output pin, also in SD cfg
           - Interlock/PTTin bug fix
@@ -1289,10 +1291,8 @@ unsigned long automatic_sending_interruption_time = 0;
 
   TODO:
   -----
-  - if CAT disable, show in menu 04 off
   - stop playng RTTY memory
   - http check new firmware (github)
-  - move configuration to SD card
   - ssb ptt from elbug
   - MqttPub tx CW ascii
   ? use interrupt function for interlock, PTT232, Foot PTT
@@ -1301,9 +1301,12 @@ unsigned long automatic_sending_interruption_time = 0;
   Known Bugs
   ----------
   - RTTY RX decoder not work after tx mem or change mode
+  - FSK jelo, ale PTT ne, nesvitila LED, ani TRX a na LCD probliklo neco jako: subscribe test ... - po odpojeni LAN to uz neudelalo.
+  - NEfunguje PTT In z toho TRX, jak zaklicuju TRX, zustane uz zaklicovano - neni nejaky problem diky casu sekvenceru? S nulama jsem nezkousel
+  - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic.
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20190924";
+const char* REV = "20200601";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -1316,9 +1319,11 @@ bool RemoteSwitch    = 0;          // IP controled remote RemoteSwitch https://r
 bool KeyboardAnswLed = 0;          // Keyboard Led shown answered UDP packet from IP RemoteSwitch
                                       // + latency measure. Disable set localy
 bool GpsTime         = 1;          // External GPS via ACC [FGPMMOPA6H chip] https://remoteqth.com/outdoor-gps-module.php
+                                      // ! Need change #define SERIAL_RX_BUFFER_SIZE 256
+                                      //   in file /home/dan/.arduino15/packages/arduino/hardware/avr/1.8.1/cores/arduino/HardwareSerial.h
                                       // also enabled SOMQ proxy (Single Operator Multi QTH) orchestra
                                       // If GPS synchronous time, received ascii on 89 UDP port formated with UTC time and send to some QTHs on command port 88
-                                      // IP set manually below SOxQTH variable
+#define SERIAL_RX_BUFFER_SIZE 256                                      // IP set manually below SOxQTH variable
 
 // FEATURES AND OPTIONS
 int DebuggingOutput  = 0;          // 0 = OFF, 1 - Serial0 KEY, 2 - Serial2 CAT, 3 - UDP, 4 - MQTT
@@ -1565,7 +1570,8 @@ char* ANTname[12] = {
   #include <EthernetUdp.h>
   // #include <Ethernet2.h> // and disable on line #749
   // #include <EthernetUdp2.h>
-  #include <PubSubClient.h>
+  // #include <PubSubClient.h>
+  #include "PubSubClient.h" // lokalni verze s upravou #define MQTT_MAX_PACKET_SIZE 128
   byte LastMac = 0xFF - NET_ID;
   byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, LastMac};
   IPAddress ip(192, 168, 1, 220);         // IP
@@ -1628,6 +1634,7 @@ char charConfigFile[8]; // length +1
 
 // GpsTime
 int SERBAUD3                  = 9600;       // Serial3 in/out baudrate in ACC connector [FGPMMOPA6H chip]
+#define SERIAL_RX_BUFFER_SIZE 256
 long GpsTimeMillis;                         // PPS millis
 long GpsTimeMillisUTC;                      // UTC millis calculate from NMEA
 long GpsTimeMillisDiff;                     // Synchronous difference 1-0
@@ -1639,6 +1646,8 @@ long TxUtcTimeMillis;
 long TxTimeMillis;
 bool GpsStatus = false;
 bool GpsStatusPrev = true;
+int NmeaSM = 0;
+int NmeaSMprev = 0;
 
 // SOMQ orchestra - need GPS
 const int SOxQTH = 3;                        // Number of QTH - need manually insert SOxQIP, SOxQPort variables and expand TX QTH in IncomingUDP() subroutine
@@ -1655,7 +1664,7 @@ IPAddress SO3QIP(192, 168, 1, 40);           // remote QTH NetID 3 IP
 int SO3QPort = 88;                           // remote QTH NetID 3 port
 
 // Serial2FSK (FSK TX)
-int SERBAUD0                  = 9600;       // Serial0 in/out baudrate (seria2fsk), if set 1200 may be controled as winkey
+int SERBAUD0               = 115200;     // Serial0 in/out baudrate (seria2fsk), if set 1200 may be controled as winkey
 bool AFSK_ENABLE           = 0;          // AFSK AUDIO (serial2fsk, fsk memory)
 bool SERIAL_FSK_TX_ECHO    = 0;          // enable TX echo on serial port
 bool SHOW_HIDDEN_FSK_CHAR  = 0;          // show invisible TX characters on LCD
@@ -1840,7 +1849,7 @@ const char* modeLCD[6][3]= {
     {"|DIG", "Data  AFSK", "DIG"},
 };
 
-char* MenuTree[29]= {
+char* MenuTree[31]= {
   "          ",      //  0 call
   // "PCB 3.1415",      //  1
   "rev",             //  1
@@ -1871,6 +1880,8 @@ char* MenuTree[29]= {
   "Debug",           // 26  Debug values on Serial2
   "",                // 27  if enable, disable Interlock
   "PTTout",          // 28  PTT outputs by mode
+  "IP ",             // 29  IP 1/2
+  "   ",             // 30  IP 2/2
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -2256,9 +2267,12 @@ void setup()
   SwitchHardware(MODE_AFTER_POWER_UP);
   InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
 
-  // Serial.begin(1200);
   YOUR_CALL.toCharArray(MenuTree[0], 10);
 
+  // #ifdef FEATURE_COMMAND_LINE_INTERFACE
+  //   Serial.begin(SERBAUD0);
+    Serial.begin(115200);
+  // #endif
 } // SETUP END
 
 //-------------------------------------------------------------------------------------------------------
@@ -2275,6 +2289,7 @@ void loop() {
   OpenInterfaceSequencer();
   // check_ptt_low();
   RemoteSwQuery();
+  // GPStime();
   GPStimeWatchdog();
   mqtt_wall();
   // Telnet();
@@ -2282,14 +2297,13 @@ void loop() {
   // if (millis() - Timeout[8][0] > (Timeout[8][1])){
   //   SendBroadcastUdp();
   // }
-
 }    // end loop
 
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
 // http://www.catonmat.net/blog/low-level-bit-hacks-you-absolutely-must-know/
 
 void IdBySmtPad(){
-  if(NET_ID==0x00){
+  if(NET_ID==0xff){
     NET_ID = 0;
     if(digitalRead(SMTpad1)==0){
       NET_ID = NET_ID | (1<<0);    // Set the n-th bit
@@ -2304,6 +2318,8 @@ void IdBySmtPad(){
 }
 
 void GpsPpsInterrupt(){    // run from interrupt
+  TON(2);
+
   /* NMEA checksum http://www.hhhh.org/wiml/proj/nmeaxor.html
   Switch to $GPGGA only
   $PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29<CR><LF>
@@ -2322,11 +2338,11 @@ void GpsPpsInterrupt(){    // run from interrupt
       if(ReadGpsData[GpsBufferPos]=='$'){ // sync start
         GpsBufferPos=0;
       }else{
-        // Serial.print(ReadGpsData[GpsBufferPos]);
+        Serial.print(ReadGpsData[GpsBufferPos]);
         GpsBufferPos++;
       }
     }
-    // Serial.println();
+    Serial.println();
     GpsBufferPos=0;
 
     // if quality byte 1 or 2, and begin GPGGA string
@@ -2351,6 +2367,7 @@ void GpsPpsInterrupt(){    // run from interrupt
 
       Debugging(String((char*)ReadGpsData)+" UTC|diff|millis: "+String(GpsUtc[0])+":"+String(GpsUtc[1])+":"+String(GpsUtc[2])+" "+String(GpsTimeMillisUTC)+","+String(GpsTimeMillisUTC, HEX)+"|"+String(GpsTimeMillisDiff)+","+String(GpsTimeMillisDiff, HEX)+"|"+String(millis()) );
     }else{
+      Debugging(String((char*)ReadGpsData)+" UTC|diff|millis: "+String(GpsUtc[0])+":"+String(GpsUtc[1])+":"+String(GpsUtc[2])+" "+String(GpsTimeMillisUTC)+","+String(GpsTimeMillisUTC, HEX)+"|"+String(GpsTimeMillisDiff)+","+String(GpsTimeMillisDiff, HEX)+"|"+String(millis()) );
       // error beep
       // TON(2);
     }
@@ -2382,6 +2399,137 @@ void GPStimeWatchdog(){
       GpsStatusPrev=GpsStatus;
     }
   }
+}
+//-------------------------------------------------------------------------------------------------------
+void GPStime(){
+
+
+
+
+    // while(Serial3.available()){
+    //   ReadGpsData[GpsBufferPos] = Serial3.read();
+    //   if(ReadGpsData[GpsBufferPos]=='$'){ // sync start
+    //     Serial.println();
+    //     Serial.println(String(ReadGpsData));
+    //     GpsBufferPos=0;
+    //   }else{
+    //     Serial.print(ReadGpsData[GpsBufferPos]);
+    //     GpsBufferPos++;
+    //   }
+    // }
+    // Serial.println();
+    // GpsBufferPos=0;
+
+    // if (Serial3.available() > 0) {
+    while(Serial3.available()){
+        byte b = Serial3.read();
+        if(b=='$'){ // sync start
+          for (int i=0; i<70; i++) {
+            if(NmeaSM>43){
+              Serial.print(char(ReadGpsData[i]));
+            }
+  	         ReadGpsData[i]=0;
+	        }
+          Serial.println();
+          NmeaSM=0;
+        }
+       /*
+                  1         2         3         4         5         6
+        0123456789012345678901234567890123456789012345678901234567890123456789
+        $GPGGA,064951.000,2307.1256,N,12016.4438,E,1,8,0.95,39.9,M,17.8,M,,*65
+        $GPGGA,215003.000,5008.3660,N,01428.8084,E,1,7,1.21,297.4,M,45.5,M,,*55
+              ,hhmmss.sss,ddmm.mmmm,N,dddmm.mmmm,E,*,#,HDOP,ALT m,M,GEO ,M,,Checksum
+              | UTC Time | Latitude|S| Longitude|W| | |    |
+
+              * fix indicator
+                0-Fix not available
+                1-GPS fix
+                2-Differential GPS fix
+              # Satellites used 0-14
+              HDOP-Horizontal Dilution of Precision
+              GEO -Geoidal Separation
+           */
+        switch (NmeaSM) {
+          case 0: if(b=='$'){ReadGpsData[NmeaSM]=b;NmeaSM=1;}; break;
+          case 1: if(b=='G'){ReadGpsData[NmeaSM]=b;NmeaSM=2;}else{NmeaSM=0;}; break;
+          case 2: if(b=='P'){ReadGpsData[NmeaSM]=b;NmeaSM=3;}else{NmeaSM=0;}; break;
+          case 3: if(b=='G'){ReadGpsData[NmeaSM]=b;NmeaSM=4;}else{NmeaSM=0;}; break;
+          case 4: if(b=='G'){ReadGpsData[NmeaSM]=b;NmeaSM=5;}else{NmeaSM=0;}; break;
+          case 5: if(b=='A'){ReadGpsData[NmeaSM]=b;NmeaSM=6;}else{NmeaSM=0;}; break;
+          case 6: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=7;}else{NmeaSM=0;}; break;
+          case 7: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=8;}else{NmeaSM=0;}; break;
+          case 8: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=9;}else{NmeaSM=0;}; break;
+          case 9: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=10;}else{NmeaSM=0;}; break;
+          case 10: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=11;}else{NmeaSM=0;}; break;
+          case 11: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=12;}else{NmeaSM=0;}; break;
+          case 12: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=13;}else{NmeaSM=0;}; break;
+          case 13: if(b=='.'){ReadGpsData[NmeaSM]=b;NmeaSM=14;}else{NmeaSM=0;}; break;
+          case 14: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=15;}else{NmeaSM=0;}; break;
+          case 15: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=16;}else{NmeaSM=0;}; break;
+          case 16: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=17;}else{NmeaSM=0;}; break;
+          case 17: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=18;}else{NmeaSM=0;}; break;
+          case 18: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=19;}else{NmeaSM=0;}; break;
+          case 19: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=20;}else{NmeaSM=0;}; break;
+          case 20: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=21;}else{NmeaSM=0;}; break;
+          case 21: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=22;}else{NmeaSM=0;}; break;
+          case 22: if(b=='.'){ReadGpsData[NmeaSM]=b;NmeaSM=23;}else{NmeaSM=0;}; break;
+          case 23: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=24;}else{NmeaSM=0;}; break;
+          case 24: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=25;}else{NmeaSM=0;}; break;
+          case 25: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=26;}else{NmeaSM=0;}; break;
+          case 26: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=27;}else{NmeaSM=0;}; break;
+          case 27: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=28;}else{NmeaSM=0;}; break;
+          case 28: if(b=='N'){ReadGpsData[NmeaSM]=b;NmeaSM=29;}else{NmeaSM=0;}; break;
+          case 29: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=30;}else{NmeaSM=0;}; break;
+          case 30: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=31;}else{NmeaSM=0;}; break;
+          case 31: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=32;}else{NmeaSM=0;}; break;
+          case 32: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=33;}else{NmeaSM=0;}; break;
+          case 33: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=34;}else{NmeaSM=0;}; break;
+          case 34: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=35;}else{NmeaSM=0;}; break;
+          case 35: if(b=='.'){ReadGpsData[NmeaSM]=b;NmeaSM=36;}else{NmeaSM=0;}; break;
+          case 36: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=37;}else{NmeaSM=0;}; break;
+          case 37: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=38;}else{NmeaSM=0;}; break;
+          case 38: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=39;}else{NmeaSM=0;}; break;
+          case 39: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=40;}else{NmeaSM=0;}; break;
+          case 40: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=41;}else{NmeaSM=0;}; break;
+          case 41: if(b=='E'){ReadGpsData[NmeaSM]=b;NmeaSM=42;}else{NmeaSM=0;}; break;
+          case 42: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=43;}else{NmeaSM=0;}; break;
+          case 43: if(b>=48&&b<=50){ReadGpsData[NmeaSM]=b;NmeaSM=44;}else{NmeaSM=0;}; break;
+          case 44: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=45;}else{NmeaSM=0;}; break;
+          // default: if(NmeaSM>=45 && NmeaSM<70){ReadGpsData[NmeaSM]=b;NmeaSM++;}else{NmeaSM=0;}; break;
+        }
+      }
+      if(NmeaSM!=NmeaSMprev){
+        // Debugging("NmeaSM "+String(NmeaSMprev)+"|"+String(ReadGpsData[NmeaSMprev]));
+        // Serial.print(NmeaSMprev);
+        // Serial.print(":");
+        // Serial.print(char(ReadGpsData[NmeaSMprev]));
+        // Serial.print("|");
+        NmeaSMprev=NmeaSM;
+        // if(NmeaSM==0){
+        //   Serial.println();
+        // }
+      }
+
+
+  // Watchdog
+  // if ((millis() - Timeout[9][0]) > Timeout[9][1] && GpsTime==1){
+  //   ReadGpsData[42] = 0; // reset gps quality byte
+  //   Serial3.print(F("$PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n"));
+  //   Debugging("GPS-reInit");
+  //   Timeout[9][0] = millis();
+  // }
+  //
+  // if(GpsTime==1){
+  //   if((ReadGpsData[42]=='1' || ReadGpsData[42]=='2')){
+  //     GpsStatus=true;
+  //   }else{
+  //     GpsStatus=false;
+  //   }
+  //   if(GpsStatus!=GpsStatusPrev){
+  //     MqttPubString("gps_qrv", String(GpsStatus), false);
+  //     GpsStatusPrev=GpsStatus;
+  //   }
+  // }
 }
 
 //-------------------------------------------------------------------------------------------------------
@@ -4444,6 +4592,10 @@ void MenuToLCD(int nr){
     }
     case 4:{ // Band Decoder
       lcd.setCursor(CulumnPosition, 1);
+      if (BAND_DECODER_IN == 0){  // ICOM_CIV
+        lcd.print(F("none"));
+        CulumnPosition=CulumnPosition+4;
+      }
       if (BAND_DECODER_IN == 1){  // ICOM_CIV
         lcd.print(F("ICOM"));
         CulumnPosition=CulumnPosition+4;
@@ -4792,6 +4944,24 @@ void MenuToLCD(int nr){
       lcd.print(F(" "));
       lcd.print(PTTbyMode[ActualMode]);
       CulumnPosition=CulumnPosition+String(modeLCD[ActualMode][2]).length()+1;
+    break;
+    }
+    case 29:{ // IP 1/2
+      lcd.setCursor(CulumnPosition-1, 1);
+      lcd.print(Ethernet.localIP()[0]);
+      lcd.print(F("."));
+      lcd.print(Ethernet.localIP()[1]);
+      lcd.print(F("."));
+      CulumnPosition=CulumnPosition+String(Ethernet.localIP()[0]+".."+Ethernet.localIP()[1]).length()+1;
+    break;
+    }
+    case 30:{ // IP 2/2
+      lcd.setCursor(CulumnPosition-1, 1);
+      lcd.print(F("."));
+      lcd.print(Ethernet.localIP()[2]);
+      lcd.print(F("."));
+      lcd.print(Ethernet.localIP()[3]);
+      CulumnPosition=CulumnPosition+String(Ethernet.localIP()[2]+".."+Ethernet.localIP()[3]).length()+1;
     break;
     }
 
@@ -5474,7 +5644,7 @@ void fskDecoder(){
 //-------------------------------------------------------------------------------------------------------
 
 void BandDecoder() {
-  if (BAND_DECODER_IN > 0){
+  if (BAND_DECODER_IN > 0 && SequencerLevel == 0){
     // SERIAL IN
     if (BAND_DECODER_IN == 5){  // INPUT_SERIAL
 
