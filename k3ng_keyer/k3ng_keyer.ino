@@ -1261,6 +1261,8 @@ unsigned long automatic_sending_interruption_time = 0;
 
   Changelog:
   ----------
+  2020-10 - mqtt subscribe /ptt (SSB only)
+          - GPS fixed
   2020-06 - show IP in menu 29-30
           - CAT disable if PTT ON
   2019-09 - Sequencer code complete redesign
@@ -1303,10 +1305,10 @@ unsigned long automatic_sending_interruption_time = 0;
   - RTTY RX decoder not work after tx mem or change mode
   - FSK jelo, ale PTT ne, nesvitila LED, ani TRX a na LCD probliklo neco jako: subscribe test ... - po odpojeni LAN to uz neudelalo.
   - NEfunguje PTT In z toho TRX, jak zaklicuju TRX, zustane uz zaklicovano - neni nejaky problem diky casu sekvenceru? S nulama jsem nezkousel
-  - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic.
+  - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20200601";
+const char* REV = "20201013";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -1319,11 +1321,11 @@ bool RemoteSwitch    = 0;          // IP controled remote RemoteSwitch https://r
 bool KeyboardAnswLed = 0;          // Keyboard Led shown answered UDP packet from IP RemoteSwitch
                                       // + latency measure. Disable set localy
 bool GpsTime         = 1;          // External GPS via ACC [FGPMMOPA6H chip] https://remoteqth.com/outdoor-gps-module.php
-                                      // ! Need change #define SERIAL_RX_BUFFER_SIZE 256
-                                      //   in file /home/dan/.arduino15/packages/arduino/hardware/avr/1.8.1/cores/arduino/HardwareSerial.h
+                                      // ! Need change #define SERIAL_RX_BUFFER_SIZE [GpsBufferSize variable]
+                                      //   in file /home/dan/.arduino15/packages/arduino/hardware/avr/1.8.x/cores/arduino/HardwareSerial.h
                                       // also enabled SOMQ proxy (Single Operator Multi QTH) orchestra
                                       // If GPS synchronous time, received ascii on 89 UDP port formated with UTC time and send to some QTHs on command port 88
-#define SERIAL_RX_BUFFER_SIZE 256                                      // IP set manually below SOxQTH variable
+                                      // IP set manually below SOxQTH variable
 
 // FEATURES AND OPTIONS
 int DebuggingOutput  = 0;          // 0 = OFF, 1 - Serial0 KEY, 2 - Serial2 CAT, 3 - UDP, 4 - MQTT
@@ -1368,6 +1370,7 @@ int UDP_COMMAND_PORT    = 88;         /* UDP port listen to RX command
                                                          0=disable 1=serial1(KEY) 2=serial2(CAT) 3=UDP broadcast 4=MQTT
                                                          [echo -n "c:004:3;" | nc -u -w1 192.168.1.75 88] set
                                                          [tcpdump -A -i enp0s31f6 ether broadcast and udp port 88 | grep 'debug:' | cut -d ':' -f2 | cut -d ';' -f1] listen
+                                                         [mosquitto_sub -h 54.38.157.134 -t OK1HRA/OI3/2/#]
 
                                       b:s#;  - Broadcast identify packet
                                              - s = Switch board, # = ID
@@ -1497,7 +1500,7 @@ number of IP switch bank C position
 int IpSwitchEncoder;
 byte IpSwitchBankC[2];
 
-const int CIVModeSet[13]{
+const int CIVModeSet[13] {
 /* ICOM mode  ->  Open Interface mode
                   0|CWK     -WinKey
                   1>CWD     -cw/dtr, ptt/rts
@@ -1520,7 +1523,7 @@ const int CIVModeSet[13]{
 /* PSK 	      */  5
 };
 
-const int KenwoodCatModeSet[10]{
+const int KenwoodCatModeSet[10] {
 /* KENWOOD mode  ->   Open Interface mode 0-CW Keyer, 1-CW PC, 2-SSB, 3-FSK PC, 4-FSK, 5-DIGITAL(AFSK)*/
 /* No mode    */	0,
 /* LSB        */	2,
@@ -1533,7 +1536,7 @@ const int KenwoodCatModeSet[10]{
 /* Tune       */	0,
 /* RTTY-R     */  4
 };
-const int KenwoodCatModeSetReverse[6]{
+const int KenwoodCatModeSetReverse[6] {
 /* OI3 mode > 0 No mode | 1 LSB | 2 USB | 3 CW | 4 FM | 5 AM | 6 RTTY(FSK) | 7 CW-R | 8 Tune | 9 RTTY-R */
 /* CW Keyer   */  3,
 /* CW PC      */  3,
@@ -1561,8 +1564,8 @@ char* ANTname[12] = {
 
 // ETHERNET - MQTT
 // if (EnableEthernet == true){ //--------------------------------------------------------------------------- vypnout asi
-  const byte RemoteDevice = 's';
-  const byte ThisDevice = 'o';
+  const byte RemoteDevice PROGMEM = 's';
+  const byte ThisDevice PROGMEM = 'o';
   bool EthLinkStatus = 0;
   long EthLinkStatusTimer[2]{1500,1000};
   #include <SPI.h>
@@ -1570,8 +1573,8 @@ char* ANTname[12] = {
   #include <EthernetUdp.h>
   // #include <Ethernet2.h> // and disable on line #749
   // #include <EthernetUdp2.h>
-  // #include <PubSubClient.h>
-  #include "PubSubClient.h" // lokalni verze s upravou #define MQTT_MAX_PACKET_SIZE 128
+  #include <PubSubClient.h>
+  // #include "PubSubClient.h" // lokalni verze s upravou #define MQTT_MAX_PACKET_SIZE 128
   byte LastMac = 0xFF - NET_ID;
   byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, LastMac};
   IPAddress ip(192, 168, 1, 220);         // IP
@@ -1591,7 +1594,7 @@ char* ANTname[12] = {
   #define UDP_TX_PACKET_MAX_SIZE 40       // MIN 30
   char packetBuffer[UDP_TX_PACKET_MAX_SIZE]; //buffer to hold incoming packet,
   int UDPpacketSize;
-  char mqttTX[50];
+  char mqttTX[150];
   char mqttPath[20];
   EthernetUDP UdpCommand; // An EthernetUDP instance to let us send and receive packets over UDP
   EthernetUDP UdpRtty;
@@ -1610,7 +1613,7 @@ char* ANTname[12] = {
 // http
 #include <EthernetServer.h>
 EthernetServer webServer(80);           // Web server PORT
-String HTTP_req;
+// String HTTP_req;
 char linebuf[80];
 int charcount=0;
 
@@ -1629,6 +1632,7 @@ int RandomNumber;
 // microSD
 #include <SD.h>
 File myFile;
+
 String ConfigFile="oi0.cfg";
 char charConfigFile[8]; // length +1
 
@@ -1638,19 +1642,20 @@ int SERBAUD3                  = 9600;       // Serial3 in/out baudrate in ACC co
 long GpsTimeMillis;                         // PPS millis
 long GpsTimeMillisUTC;                      // UTC millis calculate from NMEA
 long GpsTimeMillisDiff;                     // Synchronous difference 1-0
-char ReadGpsData[70];
+const int GpsBufferSize = 80;
+char ReadGpsData[GpsBufferSize];
 String ReadGpsDataString;
 long GpsUtc[3];
 byte GpsBufferPos  = 0;
 long TxUtcTimeMillis;
 long TxTimeMillis;
-bool GpsStatus = false;
-bool GpsStatusPrev = true;
+bool GpsPpsStatus = false;
+bool GpsPpsStatusPrev = true;
 int NmeaSM = 0;
 int NmeaSMprev = 0;
 
 // SOMQ orchestra - need GPS
-const int SOxQTH = 3;                        // Number of QTH - need manually insert SOxQIP, SOxQPort variables and expand TX QTH in IncomingUDP() subroutine
+const int SOxQTH PROGMEM = 3;                        // Number of QTH - need manually insert SOxQIP, SOxQPort variables and expand TX QTH in IncomingUDP() subroutine
 byte MASTER_NET_ID = 0x00;                 // all slave controlled by this ID via mqtt
 long B4TxTimer;
 int TxQthIpLatency = 100;                    // ms 120?
@@ -1674,14 +1679,7 @@ int SPACE                     = 1275;       // [Hz] AFSK space 1275 / 2125 Hz
 #define FSPACE   LOW             // FSK space level [LOW/HIGH]
 #define BaudRate 45.45           // RTTY baud rate
 #define StopBit  1.5             // stop bit long
-String FSKmemory[6]= {
-  "",                                       // reserve for incoming UDP string
-  " cq de "+YOUR_CALL+" "+YOUR_CALL+" k ",  // Memory 0 button
-  " "+YOUR_CALL+" ",                        // Memory 1 button
-  " 599 15 ",                               // Memory 2 button
-  " CQ "+YOUR_CALL+" "+YOUR_CALL+" ",       // Memory CW Left paddle
-  " "+YOUR_CALL+" "                         // Memory CW Right paddle
-};
+String FSKmemory[6];
 
 // TIMEOUTS
 long Timeout[10][2] = { // [lines][rows]
@@ -1694,7 +1692,7 @@ long Timeout[10][2] = { // [lines][rows]
     {0, 500},          // MODE button long [6][0-timer/1-long]
     {0, 1000},         // DCin voltage measure [7][0-timer/1-long]
     {0, 60000},        // UDP Broadcast packet [8][0-timer/1-timeout]
-    {0, 10000},        // GPS 1 PPS [9][0-timer/1-timeout]
+    {0, 1500},        // GPS 1 PPS timeout [9][0-timer/1-timeout]
 };
 long PTT_tail_timeout[5][2] = { // [lines][rows]
     {0, PTTtail},          // PTT 1
@@ -1717,58 +1715,58 @@ byte SequencerLevel = 0;   // 0 = off, 1-2-3 = PTT1-2-3, 4 = PA, 5 = SEQ
 
 // PIN SETTINGS https://remoteqth.com/wiki/index.php?page=Open+interface+III
 #if defined(PCB_REV_3_1415) // LCD A2, 37, 6, 7, 8, 9 (RS, E, D4, D5, D6, D7)
-  const int DCIN = A7;      // measure input voltage
-  const int DC3V = A6;      // measure 3,3V
-  const int encA = 24;      // encoder-A
-  const int encB = 18;      // encoder-B
-  const int MEM = A1;       // K3NG CW key button
-  const int CW1 = 34;       // out
-  const int CW2 = 35;       //
-  const int PTT1 = 41;      //
-  const int PTT2 = 22;      //
-  const int PTT3 = 25;      // PTT mic
-  const int MENU = 36;      // MODE button
-  const int FSK = 23;       // FSK output
-  const int INTERLOCK = 2;  // in
-  const int FootSW = 19;    // in
-  const byte BCD1 = 42;     // __
-  const byte BCD2 = 43;     //   |
-  const byte BCD3 = 44;     //   |- band data
-  const byte BCD4 = 45;     // __|  from band decoder
-  const int PADDLEL = 26;    // in
-  const int PADDLER = 28;    // in
-  const int SEQUENCER = 40; // out
-  const int PTTPA = 31;     // out PA PTT
-  const int SDPLUG = A5;    // in  microSD detect
-  const int SDCS = 53;      // out
-  const int AFSK = 29;      // out Switch TX audio path
-  const int PTT232 = 3;     // in  PTT from USB/serial interface
-  const int FSKDET = 33;    // in  FSK detector from USB/serial interface
-  const int WINKEY = 27;    // out disable DTR/RTS from from USB/serial interface during run winkey emulator
-  const int TONE = 4;       // out
-  const int ACC4 = 47;      // if enable ACC SHIFT OUT KEYBOARD
-  const int ACC5 = 13;      // if enable ACC SHIFT OUT KEYBOARD
-  const int ACC6 = 5;      // if enable ACC SHIFT OUT KEYBOARD
-  const int ACC7 = 30;       // if enable ACC SHIFT IN KEYBOARD
-  const int ACC8 = 32;
-  const int ACC9 = 11;       // if enable ACC SHIFT IN KEYBOARD
-  const int ACC10 = 12;      // if enable ACC SHIFT IN KEYBOARD
-  const int ACC11 = 38;
-  const int ACC12 = A3;
-  const int ACC13 = A4;
-  const int ACC14 = A8;
-  const int ACC15 = 21;     // SCL/interrupt/ if enable ACC SHIFT OUT KEYBOARD
-  const int ACC16 = 20;     // SDA/interrupt/ if enable GpsTime
-  const int ACC17 = A9;
-  const int ACC19 = A11;    // if define Icom ACC voltage input
-  const int SelfRES = 39;
-  const int ETHINST = 46;     // in Ethernet module install detect
+  const int DCIN PROGMEM = A7;      // measure input voltage
+  const int DC3V PROGMEM = A6;      // measure 3,3V
+  const int encA PROGMEM = 24;      // encoder-A
+  const int encB PROGMEM = 18;      // encoder-B
+  const int MEM PROGMEM = A1;       // K3NG CW key button
+  const int CW1 PROGMEM = 34;       // out
+  const int CW2 PROGMEM = 35;       //
+  const int PTT1 PROGMEM = 41;      //
+  const int PTT2 PROGMEM = 22;      //
+  const int PTT3 PROGMEM = 25;      // PTT mic
+  const int MENU PROGMEM = 36;      // MODE button
+  const int FSK PROGMEM = 23;       // FSK output
+  const int INTERLOCK PROGMEM = 2;  // in
+  const int FootSW PROGMEM = 19;    // in
+  const byte BCD1 PROGMEM = 42;     // __
+  const byte BCD2 PROGMEM = 43;     //   |
+  const byte BCD3 PROGMEM = 44;     //   |- band data
+  const byte BCD4 PROGMEM = 45;     // __|  from band decoder
+  const int PADDLEL PROGMEM = 26;    // in
+  const int PADDLER PROGMEM = 28;    // in
+  const int SEQUENCER PROGMEM = 40; // out
+  const int PTTPA PROGMEM = 31;     // out PA PTT
+  const int SDPLUG PROGMEM = A5;    // in  microSD detect
+  const int SDCS PROGMEM = 53;      // out
+  const int AFSK PROGMEM = 29;      // out Switch TX audio path
+  const int PTT232 PROGMEM = 3;     // in  PTT from USB/serial interface
+  const int FSKDET PROGMEM = 33;    // in  FSK detector from USB/serial interface
+  const int WINKEY PROGMEM = 27;    // out disable DTR/RTS from from USB/serial interface during run winkey emulator
+  const int TONE PROGMEM = 4;       // out
+  const int ACC4 PROGMEM = 47;      // if enable ACC SHIFT OUT KEYBOARD
+  const int ACC5 PROGMEM = 13;      // if enable ACC SHIFT OUT KEYBOARD
+  const int ACC6 PROGMEM = 5;      // if enable ACC SHIFT OUT KEYBOARD
+  const int ACC7 PROGMEM = 30;       // if enable ACC SHIFT IN KEYBOARD
+  const int ACC8 PROGMEM = 32;
+  const int ACC9 PROGMEM = 11;       // if enable ACC SHIFT IN KEYBOARD
+  const int ACC10 PROGMEM = 12;      // if enable ACC SHIFT IN KEYBOARD
+  const int ACC11 PROGMEM = 38;
+  const int ACC12 PROGMEM = A3;
+  const int ACC13 PROGMEM = A4;
+  const int ACC14 PROGMEM = A8;
+  const int ACC15 PROGMEM = 21;     // SCL/interrupt/ if enable ACC SHIFT OUT KEYBOARD
+  const int ACC16 PROGMEM = 20;     // SDA/interrupt/ if enable GpsTime
+  const int ACC17 PROGMEM = A9;
+  const int ACC19 PROGMEM = A11;    // if define Icom ACC voltage input
+  const int SelfRES PROGMEM = 39;
+  const int ETHINST PROGMEM = 46;     // in Ethernet module install detect
   // const int MISO = 50;
   // const int MOSI = 51;
   // const int SCK  = 52;
-  const int SMTpad1 = 48;   // ^ Internal SMT pad
-  const int SMTpad2 = 49;   // -
-  const int SMTpad3 = A0;   // v
+  const int SMTpad1 PROGMEM = 48;   // ^ Internal SMT pad
+  const int SMTpad2 PROGMEM = 49;   // -
+  const int SMTpad3 PROGMEM = A0;   // v
 #endif
 
 #if defined(PCB_REV_3_141)
@@ -1840,7 +1838,7 @@ byte Lpipe[8] = {0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 0b11000, 
 byte Rpipe[8] = {0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b11011, 0b00000};
 byte delta[8] = {0B00000, 0B00000, 0B00100, 0B01010, 0B11111, 0B00000, 0B00000, 0B00000};
 byte ANT[8] = {0b10101, 0b10101, 0b10101, 0b01110, 0b00100, 0b00100, 0b00100, 0b00000};
-const char* modeLCD[6][3]= {
+const char* modeLCD[6][3] = {
     {"|CWK", "CW keyer  ", "CW"},
     {">CWD", "PC DTR/RTS", "CW"},
     {"|SSB", "LSB/USB/FM", "SSB"},
@@ -1849,7 +1847,7 @@ const char* modeLCD[6][3]= {
     {"|DIG", "Data  AFSK", "DIG"},
 };
 
-char* MenuTree[31]= {
+const char* MenuTree[31] = {
   "          ",      //  0 call
   // "PCB 3.1415",      //  1
   "rev",             //  1
@@ -1942,7 +1940,7 @@ int BAND;
 unsigned long freq = 0;
 unsigned long prevfreq=1;
 // #if defined(ICOM_ACC)
-    const int AD = ACC19;
+    const int AD PROGMEM = ACC19;
     int VALUE = 0;
     int prevVALUE=0;
     float VOLTAGE = 0;
@@ -1961,20 +1959,20 @@ unsigned long prevfreq=1;
 // #endif
 // #if defined(KENWOOD_PC)
     char rdK[37];   //read data kenwood
-    String rdKS;    //read data kenwood string
+    String rdS;    //read data kenwood string
 // #endif
 // #if defined(YAESU_CAT)
     char rdY[37];   //read data yaesu
-    String rdYS;    //read data yaesu string
+    // String rdYS;    //read data yaesu string
 // #endif
 // #if defined(YAESU_CAT_OLD)
     byte rdYO[37];   //read data yaesu
-    String rdYOS;    //read data yaesu string
+    // String rdYOS;    //read data yaesu string
 // #endif
 // #if defined(ICOM_CIV) || defined(ICOM_CIV_OUT)
     int fromAdress = 14;              // 0E
     byte rdI[10];   //read data icom
-    String rdIS;    //read data icom string
+    // String rdIS;    //read data icom string
     unsigned long freqPrev1;
     byte incomingByte = 0;
     int stateMachine = 1;  // state machine
@@ -2034,6 +2032,13 @@ void setup()
 
 //---------------------------------------------------------------------------------------------------------
   // #OI3 SETUP
+  YOUR_CALL.reserve(10);
+  ReadGpsDataString.reserve(GpsBufferSize);
+  ConfigFile.reserve(7);
+  rdS.reserve(128);
+  // FSKmemory.reserve(40);
+
+
   // Menu
   pinMode(DCIN, INPUT);
   pinMode(DC3V, INPUT);
@@ -2287,13 +2292,13 @@ void loop() {
   OpenInterfaceMODE();  // MODE in->out and features
   IncomingUDP();        // Incomming UDP command and transmit characters
   OpenInterfaceSequencer();
-  // check_ptt_low();
   RemoteSwQuery();
-  // GPStime();
   GPStimeWatchdog();
   mqtt_wall();
-  // Telnet();
 
+  // check_ptt_low();
+  // GPStime();
+  // Telnet();
   // if (millis() - Timeout[8][0] > (Timeout[8][1])){
   //   SendBroadcastUdp();
   // }
@@ -2318,8 +2323,9 @@ void IdBySmtPad(){
 }
 
 void GpsPpsInterrupt(){    // run from interrupt
-  TON(2);
-
+  // if(DebuggingOutput!=0){
+  //   TON(2);
+  // }
   /* NMEA checksum http://www.hhhh.org/wiml/proj/nmeaxor.html
   Switch to $GPGGA only
   $PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29<CR><LF>
@@ -2331,19 +2337,23 @@ void GpsPpsInterrupt(){    // run from interrupt
 
   // Read 64 byte serial buffer
   // $GPGGA,215003.000,5008.3660,N,01428.8084,E,1,7,1.21,297.4,M,45.
-  ReadGpsData[42] = 0; // reset quality byte
+
+  // ReadGpsData[42] = 0; // reset quality byte
   if(SequencerLevel == 0){    // if PTT OFF
-    while(Serial3.available()){
-      ReadGpsData[GpsBufferPos] = Serial3.read();
-      if(ReadGpsData[GpsBufferPos]=='$'){ // sync start
-        GpsBufferPos=0;
-      }else{
-        Serial.print(ReadGpsData[GpsBufferPos]);
-        GpsBufferPos++;
-      }
-    }
-    Serial.println();
-    GpsBufferPos=0;
+
+    //  MOVE TO LOOP
+    // while(Serial3.available()){
+    //   ReadGpsData[GpsBufferPos] = Serial3.read();
+    //   if(ReadGpsData[GpsBufferPos]=='$'){ // sync start
+    //     GpsBufferPos=0;
+    //   }else{
+    //     // Serial.print(ReadGpsData[GpsBufferPos]);
+    //     Debugging(String((char*)ReadGpsData[GpsBufferPos]));
+    //     GpsBufferPos++;
+    //   }
+    // }
+    // // Serial.println();
+    // GpsBufferPos=0;
 
     // if quality byte 1 or 2, and begin GPGGA string
     if( (ReadGpsData[42]=='1' || ReadGpsData[42]=='2') && ReadGpsData[0]==71 && ReadGpsData[1]==80 && ReadGpsData[2]==71 && ReadGpsData[3]==71 && ReadGpsData[4]==65 && ReadGpsData[5]==44){
@@ -2365,45 +2375,75 @@ void GpsPpsInterrupt(){    // run from interrupt
       GpsTimeMillisUTC = (GpsUtc[0]*3600000) + (GpsUtc[1]*60000) + (GpsUtc[2]*1000) ;
       GpsTimeMillisDiff = GpsTimeMillisUTC - GpsTimeMillis;   // difference between UTC-PPS
 
-      Debugging(String((char*)ReadGpsData)+" UTC|diff|millis: "+String(GpsUtc[0])+":"+String(GpsUtc[1])+":"+String(GpsUtc[2])+" "+String(GpsTimeMillisUTC)+","+String(GpsTimeMillisUTC, HEX)+"|"+String(GpsTimeMillisDiff)+","+String(GpsTimeMillisDiff, HEX)+"|"+String(millis()) );
+      Debugging(String((char*)ReadGpsData));
+      Debugging("UTC|diff|millis: "+String(GpsUtc[0])+":"+String(GpsUtc[1])+":"+String(GpsUtc[2])+" "+String(GpsTimeMillisUTC)+","+String(GpsTimeMillisUTC, HEX)+"|"+String(GpsTimeMillisDiff)+","+String(GpsTimeMillisDiff, HEX)+"|"+String(millis()) );
     }else{
-      Debugging(String((char*)ReadGpsData)+" UTC|diff|millis: "+String(GpsUtc[0])+":"+String(GpsUtc[1])+":"+String(GpsUtc[2])+" "+String(GpsTimeMillisUTC)+","+String(GpsTimeMillisUTC, HEX)+"|"+String(GpsTimeMillisDiff)+","+String(GpsTimeMillisDiff, HEX)+"|"+String(millis()) );
+      Debugging("GPS data NOK");
+      Debugging(String((char*)ReadGpsData));
+      // for (int i = 0; i < GpsBufferSize; i++) {
+      //   ReadGpsData[i]=0x00;
+      // }
+      GpsTimeMillisUTC = GpsTimeMillisUTC+1000 ;
+      GpsTimeMillisDiff = GpsTimeMillisUTC - GpsTimeMillis;   // difference between UTC-PPS
+      // GPGGA,194633.000,5001.9970,N,01350.2022,E, UTC|diff|millis: 19:46:33 71193000,43e51a8|71176222,43e101e|77649
       // error beep
-      // TON(2);
-    }
-    Timeout[9][0] = millis();
-    if(ActualMenu==23 || ActualMenu==24 ){
-      LcdNeedRefresh=true;
+      if(DebuggingOutput!=0){
+        TON(2);
+      }
     }
   }else{
     Serial3.read(); // clear rx buffer
+    GpsTimeMillisUTC = GpsTimeMillisUTC+1000 ;
+    GpsTimeMillisDiff = GpsTimeMillisUTC - GpsTimeMillis;   // difference between UTC-PPS
+  }
+  Timeout[9][0] = millis();
+  if(ActualMenu==23 || ActualMenu==24 ){
+    LcdNeedRefresh=true;
   }
 }
 //-------------------------------------------------------------------------------------------------------
 void GPStimeWatchdog(){
-  if ((millis() - Timeout[9][0]) > Timeout[9][1] && GpsTime==1){
-    ReadGpsData[42] = 0; // reset gps quality byte
-    Serial3.print(F("$PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n"));
-    Debugging("GPS-reInit");
-    Timeout[9][0] = millis();
-  }
-
   if(GpsTime==1){
-    if((ReadGpsData[42]=='1' || ReadGpsData[42]=='2')){
-      GpsStatus=true;
-    }else{
-      GpsStatus=false;
+    // read NMEA
+    while(Serial3.available()){
+      ReadGpsData[GpsBufferPos] = Serial3.read();
+      if(ReadGpsData[GpsBufferPos]=='$'){ // sync start
+        GpsBufferPos=0;
+      }else{
+        if(GpsBufferPos<GpsBufferSize){
+          GpsBufferPos++;
+        }
+      }
     }
-    if(GpsStatus!=GpsStatusPrev){
-      MqttPubString("gps_qrv", String(GpsStatus), false);
-      GpsStatusPrev=GpsStatus;
+
+    // send config
+    if ((millis() - Timeout[9][0]) > Timeout[9][1]*10 && GpsTime==1){
+      Serial3.print(F("$PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n"));
+      Debugging("GPS-reInit");
+      Timeout[9][0] = millis();
+    }
+
+    // PPS timeout
+    if ((millis() - Timeout[9][0]) > Timeout[9][1]){
+      GpsPpsStatus=false;
+      ReadGpsData[0]=='0';
+    }
+    if( ((millis() - Timeout[9][0]) < Timeout[9][1]) && (ReadGpsData[42]=='1' || ReadGpsData[42]=='2') && GpsPpsStatusPrev==false){
+      GpsPpsStatus=true;
+    }
+    if(GpsPpsStatus!=GpsPpsStatusPrev){
+      MqttPubString("gps_qrv", String(GpsPpsStatus), false);
+      GpsPpsStatusPrev=GpsPpsStatus;
     }
   }
 }
 //-------------------------------------------------------------------------------------------------------
 void GPStime(){
 
-
+  while(Serial3.available()){
+      byte b = Serial3.read();
+      Serial.write(b);
+    }
 
 
     // while(Serial3.available()){
@@ -2421,94 +2461,95 @@ void GPStime(){
     // GpsBufferPos=0;
 
     // if (Serial3.available() > 0) {
-    while(Serial3.available()){
-        byte b = Serial3.read();
-        if(b=='$'){ // sync start
-          for (int i=0; i<70; i++) {
-            if(NmeaSM>43){
-              Serial.print(char(ReadGpsData[i]));
-            }
-  	         ReadGpsData[i]=0;
-	        }
-          Serial.println();
-          NmeaSM=0;
-        }
-       /*
-                  1         2         3         4         5         6
-        0123456789012345678901234567890123456789012345678901234567890123456789
-        $GPGGA,064951.000,2307.1256,N,12016.4438,E,1,8,0.95,39.9,M,17.8,M,,*65
-        $GPGGA,215003.000,5008.3660,N,01428.8084,E,1,7,1.21,297.4,M,45.5,M,,*55
-              ,hhmmss.sss,ddmm.mmmm,N,dddmm.mmmm,E,*,#,HDOP,ALT m,M,GEO ,M,,Checksum
-              | UTC Time | Latitude|S| Longitude|W| | |    |
-
-              * fix indicator
-                0-Fix not available
-                1-GPS fix
-                2-Differential GPS fix
-              # Satellites used 0-14
-              HDOP-Horizontal Dilution of Precision
-              GEO -Geoidal Separation
-           */
-        switch (NmeaSM) {
-          case 0: if(b=='$'){ReadGpsData[NmeaSM]=b;NmeaSM=1;}; break;
-          case 1: if(b=='G'){ReadGpsData[NmeaSM]=b;NmeaSM=2;}else{NmeaSM=0;}; break;
-          case 2: if(b=='P'){ReadGpsData[NmeaSM]=b;NmeaSM=3;}else{NmeaSM=0;}; break;
-          case 3: if(b=='G'){ReadGpsData[NmeaSM]=b;NmeaSM=4;}else{NmeaSM=0;}; break;
-          case 4: if(b=='G'){ReadGpsData[NmeaSM]=b;NmeaSM=5;}else{NmeaSM=0;}; break;
-          case 5: if(b=='A'){ReadGpsData[NmeaSM]=b;NmeaSM=6;}else{NmeaSM=0;}; break;
-          case 6: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=7;}else{NmeaSM=0;}; break;
-          case 7: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=8;}else{NmeaSM=0;}; break;
-          case 8: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=9;}else{NmeaSM=0;}; break;
-          case 9: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=10;}else{NmeaSM=0;}; break;
-          case 10: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=11;}else{NmeaSM=0;}; break;
-          case 11: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=12;}else{NmeaSM=0;}; break;
-          case 12: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=13;}else{NmeaSM=0;}; break;
-          case 13: if(b=='.'){ReadGpsData[NmeaSM]=b;NmeaSM=14;}else{NmeaSM=0;}; break;
-          case 14: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=15;}else{NmeaSM=0;}; break;
-          case 15: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=16;}else{NmeaSM=0;}; break;
-          case 16: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=17;}else{NmeaSM=0;}; break;
-          case 17: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=18;}else{NmeaSM=0;}; break;
-          case 18: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=19;}else{NmeaSM=0;}; break;
-          case 19: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=20;}else{NmeaSM=0;}; break;
-          case 20: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=21;}else{NmeaSM=0;}; break;
-          case 21: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=22;}else{NmeaSM=0;}; break;
-          case 22: if(b=='.'){ReadGpsData[NmeaSM]=b;NmeaSM=23;}else{NmeaSM=0;}; break;
-          case 23: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=24;}else{NmeaSM=0;}; break;
-          case 24: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=25;}else{NmeaSM=0;}; break;
-          case 25: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=26;}else{NmeaSM=0;}; break;
-          case 26: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=27;}else{NmeaSM=0;}; break;
-          case 27: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=28;}else{NmeaSM=0;}; break;
-          case 28: if(b=='N'){ReadGpsData[NmeaSM]=b;NmeaSM=29;}else{NmeaSM=0;}; break;
-          case 29: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=30;}else{NmeaSM=0;}; break;
-          case 30: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=31;}else{NmeaSM=0;}; break;
-          case 31: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=32;}else{NmeaSM=0;}; break;
-          case 32: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=33;}else{NmeaSM=0;}; break;
-          case 33: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=34;}else{NmeaSM=0;}; break;
-          case 34: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=35;}else{NmeaSM=0;}; break;
-          case 35: if(b=='.'){ReadGpsData[NmeaSM]=b;NmeaSM=36;}else{NmeaSM=0;}; break;
-          case 36: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=37;}else{NmeaSM=0;}; break;
-          case 37: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=38;}else{NmeaSM=0;}; break;
-          case 38: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=39;}else{NmeaSM=0;}; break;
-          case 39: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=40;}else{NmeaSM=0;}; break;
-          case 40: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=41;}else{NmeaSM=0;}; break;
-          case 41: if(b=='E'){ReadGpsData[NmeaSM]=b;NmeaSM=42;}else{NmeaSM=0;}; break;
-          case 42: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=43;}else{NmeaSM=0;}; break;
-          case 43: if(b>=48&&b<=50){ReadGpsData[NmeaSM]=b;NmeaSM=44;}else{NmeaSM=0;}; break;
-          case 44: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=45;}else{NmeaSM=0;}; break;
-          // default: if(NmeaSM>=45 && NmeaSM<70){ReadGpsData[NmeaSM]=b;NmeaSM++;}else{NmeaSM=0;}; break;
-        }
-      }
-      if(NmeaSM!=NmeaSMprev){
-        // Debugging("NmeaSM "+String(NmeaSMprev)+"|"+String(ReadGpsData[NmeaSMprev]));
-        // Serial.print(NmeaSMprev);
-        // Serial.print(":");
-        // Serial.print(char(ReadGpsData[NmeaSMprev]));
-        // Serial.print("|");
-        NmeaSMprev=NmeaSM;
-        // if(NmeaSM==0){
-        //   Serial.println();
-        // }
-      }
+    // while(Serial3.available()){
+    //     byte b = Serial3.read();
+    //     Serial.write(b);
+    //     if(b=='$'){ // sync start
+    //       for (int i=0; i<70; i++) {
+    //         if(NmeaSM>43){
+    //           // Serial.print(char(ReadGpsData[i]));
+    //         }
+  	//          ReadGpsData[i]=0;
+	  //       }
+    //       Serial.println();
+    //       NmeaSM=0;
+    //     }
+    //    /*
+    //               1         2         3         4         5         6
+    //     0123456789012345678901234567890123456789012345678901234567890123456789
+    //     $GPGGA,064951.000,2307.1256,N,12016.4438,E,1,8,0.95,39.9,M,17.8,M,,*65
+    //     $GPGGA,215003.000,5008.3660,N,01428.8084,E,1,7,1.21,297.4,M,45.5,M,,*55
+    //           ,hhmmss.sss,ddmm.mmmm,N,dddmm.mmmm,E,*,#,HDOP,ALT m,M,GEO ,M,,Checksum
+    //           | UTC Time | Latitude|S| Longitude|W| | |    |
+    //
+    //           * fix indicator
+    //             0-Fix not available
+    //             1-GPS fix
+    //             2-Differential GPS fix
+    //           # Satellites used 0-14
+    //           HDOP-Horizontal Dilution of Precision
+    //           GEO -Geoidal Separation
+    //        */
+    //     switch (NmeaSM) {
+    //       case 0: if(b=='$'){ReadGpsData[NmeaSM]=b;NmeaSM=1;}; break;
+    //       case 1: if(b=='G'){ReadGpsData[NmeaSM]=b;NmeaSM=2;}else{NmeaSM=0;}; break;
+    //       case 2: if(b=='P'){ReadGpsData[NmeaSM]=b;NmeaSM=3;}else{NmeaSM=0;}; break;
+    //       case 3: if(b=='G'){ReadGpsData[NmeaSM]=b;NmeaSM=4;}else{NmeaSM=0;}; break;
+    //       case 4: if(b=='G'){ReadGpsData[NmeaSM]=b;NmeaSM=5;}else{NmeaSM=0;}; break;
+    //       case 5: if(b=='A'){ReadGpsData[NmeaSM]=b;NmeaSM=6;}else{NmeaSM=0;}; break;
+    //       case 6: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=7;}else{NmeaSM=0;}; break;
+    //       case 7: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=8;}else{NmeaSM=0;}; break;
+    //       case 8: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=9;}else{NmeaSM=0;}; break;
+    //       case 9: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=10;}else{NmeaSM=0;}; break;
+    //       case 10: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=11;}else{NmeaSM=0;}; break;
+    //       case 11: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=12;}else{NmeaSM=0;}; break;
+    //       case 12: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=13;}else{NmeaSM=0;}; break;
+    //       case 13: if(b=='.'){ReadGpsData[NmeaSM]=b;NmeaSM=14;}else{NmeaSM=0;}; break;
+    //       case 14: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=15;}else{NmeaSM=0;}; break;
+    //       case 15: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=16;}else{NmeaSM=0;}; break;
+    //       case 16: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=17;}else{NmeaSM=0;}; break;
+    //       case 17: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=18;}else{NmeaSM=0;}; break;
+    //       case 18: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=19;}else{NmeaSM=0;}; break;
+    //       case 19: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=20;}else{NmeaSM=0;}; break;
+    //       case 20: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=21;}else{NmeaSM=0;}; break;
+    //       case 21: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=22;}else{NmeaSM=0;}; break;
+    //       case 22: if(b=='.'){ReadGpsData[NmeaSM]=b;NmeaSM=23;}else{NmeaSM=0;}; break;
+    //       case 23: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=24;}else{NmeaSM=0;}; break;
+    //       case 24: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=25;}else{NmeaSM=0;}; break;
+    //       case 25: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=26;}else{NmeaSM=0;}; break;
+    //       case 26: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=27;}else{NmeaSM=0;}; break;
+    //       case 27: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=28;}else{NmeaSM=0;}; break;
+    //       case 28: if(b=='N'){ReadGpsData[NmeaSM]=b;NmeaSM=29;}else{NmeaSM=0;}; break;
+    //       case 29: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=30;}else{NmeaSM=0;}; break;
+    //       case 30: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=31;}else{NmeaSM=0;}; break;
+    //       case 31: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=32;}else{NmeaSM=0;}; break;
+    //       case 32: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=33;}else{NmeaSM=0;}; break;
+    //       case 33: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=34;}else{NmeaSM=0;}; break;
+    //       case 34: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=35;}else{NmeaSM=0;}; break;
+    //       case 35: if(b=='.'){ReadGpsData[NmeaSM]=b;NmeaSM=36;}else{NmeaSM=0;}; break;
+    //       case 36: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=37;}else{NmeaSM=0;}; break;
+    //       case 37: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=38;}else{NmeaSM=0;}; break;
+    //       case 38: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=39;}else{NmeaSM=0;}; break;
+    //       case 39: if(b>=48&&b<=57){ReadGpsData[NmeaSM]=b;NmeaSM=40;}else{NmeaSM=0;}; break;
+    //       case 40: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=41;}else{NmeaSM=0;}; break;
+    //       case 41: if(b=='E'){ReadGpsData[NmeaSM]=b;NmeaSM=42;}else{NmeaSM=0;}; break;
+    //       case 42: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=43;}else{NmeaSM=0;}; break;
+    //       case 43: if(b>=48&&b<=50){ReadGpsData[NmeaSM]=b;NmeaSM=44;}else{NmeaSM=0;}; break;
+    //       case 44: if(b==','){ReadGpsData[NmeaSM]=b;NmeaSM=45;}else{NmeaSM=0;}; break;
+    //       // default: if(NmeaSM>=45 && NmeaSM<70){ReadGpsData[NmeaSM]=b;NmeaSM++;}else{NmeaSM=0;}; break;
+    //     }
+    //   }
+    //   if(NmeaSM!=NmeaSMprev){
+    //     // Debugging("NmeaSM "+String(NmeaSMprev)+"|"+String(ReadGpsData[NmeaSMprev]));
+    //     // Serial.print(NmeaSMprev);
+    //     // Serial.print(":");
+    //     // Serial.print(char(ReadGpsData[NmeaSMprev]));
+    //     // Serial.print("|");
+    //     NmeaSMprev=NmeaSM;
+    //     // if(NmeaSM==0){
+    //     //   Serial.println();
+    //     // }
+    //   }
 
 
   // Watchdog
@@ -2788,7 +2829,9 @@ void EncoderInterrupt(){
 void readSDSettings(){
  char character;
  String settingName;
+ settingName.reserve(20);
  String settingValue;
+ settingValue.reserve(10);
  myFile = SD.open(charConfigFile);
  if (myFile){
 	while (myFile.available()){
@@ -2985,8 +3028,8 @@ void readSDSettings(){
       FSKmemory[1]= {" cq de "+YOUR_CALL+" "+YOUR_CALL+" k "};  // Memory 0 button
       FSKmemory[2]= {" "+YOUR_CALL+" "};                        // Memory 1 button
       FSKmemory[3]= {" 599 15 "};                               // Memory 2 button
-      FSKmemory[4]= {" CQ "+YOUR_CALL+" "+YOUR_CALL+" "};       // Memory CW Left paddle
-      FSKmemory[5]= {" "+YOUR_CALL+" "};                        // Memory CW Right paddle
+      FSKmemory[4]= {" "+YOUR_CALL+" "};                        // Memory CW Left paddle
+      FSKmemory[5]= {" "+YOUR_CALL+" "+YOUR_CALL+" test"};                        // Memory CW Right paddle
   }
 //-------------------------------------------------------------------------------------------------------
 /*void printDirectory(File dir, int numTabs) {
@@ -3018,8 +3061,10 @@ void AfterMQTTconnect(){
   //    if (mqttClient.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {          // public IP addres to MQTT
         IPAddress IPlocalAddr = Ethernet.localIP();                           // get
         String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
+        IPlocalAddrString.reserve(15);
         IPlocalAddrString.toCharArray( mqttTX, 50 );                          // to array
         String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/ip";
+        path2.reserve(20);
         path2.toCharArray( mqttPath, 20 );
           mqttClient.publish(mqttPath, mqttTX, true);
 
@@ -3061,11 +3106,12 @@ void OpenInterfaceInterlock(){      // activate from interrupt
     if (digitalRead(INTERLOCK) == ptt_interlock_active && InterlockFromUdpActive == LOW) {   // if change and not active from UDP
       ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
       if(ptt_interlock_active == 1  && SequencerLevel != 0){
+        MqttPubString("ptt", "0", false);
         digitalWrite (SEQUENCER, LOW);  // SEQUENCER
         digitalWrite (PTTPA, LOW);      // PTT-PA
-        digitalWrite (PTTpin[0], LOW);
         digitalWrite (PTTpin[1], LOW);
         digitalWrite (PTTpin[2], LOW);
+        digitalWrite (PTTpin[3], LOW);
         ptt_low(PTTbyMode[ActualMode],1);
         // OpenInterfaceSequencer();
         // OpenInterfaceSequencer();
@@ -3271,6 +3317,7 @@ void OpenInterfaceSequencer(){
     case 4:{ // PTT-123
       // if( PttActive==true && millis()-LastSeqChange>PTTlead ){
       if( PttActive==true ){
+        MqttPubString("ptt", String(PTTout), false);
         digitalWrite (PTTpin[PTTout], HIGH);      // PTT-123
         LastSeqChange=millis();
         delay(PTTlead);
@@ -3293,12 +3340,14 @@ void OpenInterfaceSequencer(){
     case 3:{ // PTT-123
       if( PttActive==false && millis()-LastSeqChange>PTTtail ){
         if(PTTout>1){
+          MqttPubString("ptt", "0", false);
           digitalWrite (PTTpin[PTTout], LOW);      // PTT-23
           LastSeqChange=millis();
           Debugging("PTT"+String(PTTout)+"-L "+String(millis()-DebuggingTimer));
           SequencerLevel=4;
           // MqttPubString("sequencer", String(SequencerLevel), false);
         }else if(PTTout==1 && send_buffer_bytes==0 && being_sent==0 ){
+          MqttPubString("ptt", "0", false);
           digitalWrite (PTTpin[PTTout], LOW);      // PTT-1
           LastSeqChange=millis();
           Debugging("PTT"+String(PTTout)+"-L "+String(millis()-DebuggingTimer));
@@ -3323,7 +3372,7 @@ void check_ptt_low(){
           SequencerLevel = 4;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
           if(PttInStatus!=true ){
-            MqttPubString("ptt1", "0", false);
+            // MqttPubString("ptt1", "0", false);
             Debugging("PTT1-L "+String(millis()-DebuggingTimer));
           }
         }
@@ -3334,7 +3383,7 @@ void check_ptt_low(){
             digitalWrite (PTT2, LOW);
           SequencerLevel = 4;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
-          MqttPubString("ptt2", "0", false);
+          // MqttPubString("ptt2", "0", false);
           Debugging("PTT2-L "+String(millis()-DebuggingTimer));
         }
       break;
@@ -3344,7 +3393,7 @@ void check_ptt_low(){
             digitalWrite (PTT3, LOW);
           SequencerLevel = 4;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
-          MqttPubString("ptt3", "0", false);
+          // MqttPubString("ptt3", "0", false);
           Debugging("PT3-L "+String(millis()-DebuggingTimer));
         }
       break;
@@ -3354,7 +3403,7 @@ void check_ptt_low(){
           digitalWrite (PTTPA, LOW);
           SequencerLevel = 5;
           PTT_tail_timeout[4][0] = millis(); // set time mark PA
-          MqttPubString("ptt_pa", "0", false);
+          // MqttPubString("ptt_pa", "0", false);
           Debugging("PTTpa-L "+String(millis()-DebuggingTimer));
       }
       break;
@@ -3365,7 +3414,7 @@ void check_ptt_low(){
           SequencerLevel = 0;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
           SendBroadcastUdpPTT(0);
-          MqttPubString("sequencer", "0", false);
+          // MqttPubString("sequencer", "0", false);
           Debugging("PTTseq-L "+String(millis()-DebuggingTimer));
         }
       break;
@@ -3560,7 +3609,9 @@ bool mqttReconnect() {
     InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     IPAddress IPlocalAddr = Ethernet.localIP();                           // get
     String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
+    IPlocalAddrString.reserve(15);
     MqttPubString("IP", IPlocalAddrString, true);
+    MqttPubString("REV", REV, true);
     lcd.clear();
     lcd.setCursor(1, 0);
     lcd.print(F("MQTT connected"));
@@ -3571,18 +3622,24 @@ bool mqttReconnect() {
 
     // resubscribe
     if(NET_ID!=MASTER_NET_ID){
+      lcd.clear();
+      lcd.setCursor(1, 0);
+      lcd.print(F("subscribe"));
+      lcd.setCursor(0, 1);
+      lcd.print(String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/");
+      delay(1000);
+      lcd.setCursor(0, 1);
+      lcd.print(F("             "));
 
       // CW
       String topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/cw";
+      topic.reserve(30);
       const char *cstr = topic.c_str();
       if(mqttClient.subscribe(cstr)==true){
-        lcd.clear();
-        lcd.setCursor(1, 0);
-        lcd.print(F("subscribe"));
         lcd.setCursor(0, 1);
-        lcd.print(cstr);
+        lcd.print(F("/cw "));
         Debugging("MQTT subscribe to "+String(cstr));
-        delay(500);
+        delay(1000);
         // lcd.clear();
       }
 
@@ -3594,9 +3651,9 @@ bool mqttReconnect() {
         // lcd.setCursor(1, 0);
         // lcd.print(F("subscribe"));
         lcd.setCursor(0, 1);
-        lcd.print(cstr1);
+        lcd.print(F("/mode "));
         Debugging("MQTT subscribe to "+String(cstr1));
-        delay(500);
+        delay(1000);
         // lcd.clear();
       }
 
@@ -3608,39 +3665,53 @@ bool mqttReconnect() {
         // lcd.setCursor(1, 0);
         // lcd.print(F("subscribe"));
         lcd.setCursor(0, 1);
-        lcd.print(cstr2);
+        lcd.print(F("/hz  "));
         Debugging("MQTT subscribe to "+String(cstr2));
-        delay(500);
+        delay(1000);
         // lcd.clear();
       }
 
-      // Hz
+      // wpm
       topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/wpm";
-      const char *cstr4 = topic.c_str();
-      if(mqttClient.subscribe(cstr4)==true){
-        // lcd.clear();
-        // lcd.setCursor(1, 0);
-        // lcd.print(F("subscribe"));
-        lcd.setCursor(0, 1);
-        lcd.print(cstr4);
-        Debugging("MQTT subscribe to "+String(cstr4));
-        delay(500);
-        // lcd.clear();
-      }
-
-      // set-debug
-      topic = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/set-debug";
       const char *cstr3 = topic.c_str();
       if(mqttClient.subscribe(cstr3)==true){
         // lcd.clear();
         // lcd.setCursor(1, 0);
         // lcd.print(F("subscribe"));
         lcd.setCursor(0, 1);
-        lcd.print(cstr3);
-        Debugging("MQTT subscribe to "+String(cstr2));
-        delay(500);
-        lcd.clear();
+        lcd.print(F("/wpm "));
+        Debugging("MQTT subscribe to "+String(cstr3));
+        delay(1000);
+        // lcd.clear();
       }
+
+      // wpm
+      topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/ptt";
+      const char *cstr4 = topic.c_str();
+      if(mqttClient.subscribe(cstr4)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("/ptt "));
+        Debugging("MQTT subscribe to "+String(cstr4));
+        delay(1000);
+        // lcd.clear();
+      }
+
+      // set-debug
+      topic = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/set-debug";
+      const char *cstr5 = topic.c_str();
+      if(mqttClient.subscribe(cstr5)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("/set-debug"));
+        Debugging("MQTT subscribe to "+String(cstr5));
+        delay(1000);
+      }
+      lcd.clear();
 
     }
     InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
@@ -3652,22 +3723,25 @@ bool mqttReconnect() {
 void MqttRx(char *topic, byte *payload, unsigned int length) {
   InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
   String CheckTopicBase; // = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/";
-  // const char *cstr = CheckTopic.c_str();
-  // if (strcmp(topic, cstr)==0){
+  CheckTopicBase.reserve(30);
   byte* p = (byte*)malloc(length);
+  memcpy(p,payload,length);
+
+  // String StringTMP = String(topic);
+  // for (int i = 0; i < length; i++) {
+  //   StringTMP = StringTMP + p[i];
+  // }
+  // Debugging(">"+StringTMP);
+  // Debugging(">"+String(p[0]));
 
   // CW/rtty    0
   CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/cw";
   if ( CheckTopicBase.equals( String(topic) )){
     if(ActualMode==3 || ActualMode==4){               // if mode FSK
-      memcpy(p,payload,length);
       FSKmemory[0] = p;
       FSKmemoryTX(0);
     }
     if(ActualMode==0 || ActualMode==1){               // if mode CW
-      // Copy the payload to the new buffer
-      memcpy(p,payload,length);
-      // ptt_high(PTTmodeCW);
       ptt_high(PTTbyMode[ActualMode]);
       // Debugging("Local CW transmit (rx buffer size "+String(length)+")");
       for (int i = 0; i < length; i++) {
@@ -3676,7 +3750,6 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
           // Debugging(String(i)+"-"+p[i]);
         }
       }
-      // ptt_low(PTTmodeCW,4);
       ptt_low(PTTbyMode[ActualMode],4);
     }
   }
@@ -3684,8 +3757,6 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   // mode   0
   CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/mode";
   if ( CheckTopicBase.equals( String(topic) )){
-    // Copy the payload to the new buffer
-    memcpy(p,payload,length);
       ActualMode=p[0]-48;
       SwitchHardware(ActualMode);
       MqttPubString("mode", String(ActualMode), false);
@@ -3700,8 +3771,6 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   // Hz   0
   CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/hz";
   if ( CheckTopicBase.equals( String(topic) )){
-    // Copy the payload to the new buffer
-    memcpy(p,payload,length);
     freq = 0;
     unsigned long exp = 1;
     for (int i = length-1; i >=0 ; i--) {
@@ -3711,6 +3780,7 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
     // KENWOOD
     if(BAND_DECODER_IN==2){
         String freqPCtx = String(freq);        // to string
+        freqPCtx.reserve(12);
         while (freqPCtx.length() < 11) {       // leding zeros
             freqPCtx = 0 + freqPCtx;
         }
@@ -3727,8 +3797,6 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   // wpm   0
   CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/wpm";
   if ( CheckTopicBase.equals( String(topic) )){
-    // Copy the payload to the new buffer
-    memcpy(p,payload,length);
     int wpm = 0;
     wpm = wpm + (p[0]-48)*10;
     wpm = wpm + (p[1]-48)*1;
@@ -3738,15 +3806,20 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   // Debug   net-id
   CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/set-debug";
   if ( CheckTopicBase.equals( String(topic) )){
-    // Copy the payload to the new buffer
-    memcpy(p,payload,length);
-    // for (i = 0; i < length; i++) {
-      // if(p[0]!=0){
-        DebuggingOutput=p[0]-48;
-        Debugging("DebuggingOutput:"+p[0]);
-      // }
-    // }
+    DebuggingOutput=p[0]-48;
+    Debugging("DebuggingOutput:"+p[0]);
   }
+
+  // ptt   0=off 1-3=on
+  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/ptt";
+  if ( CheckTopicBase.equals( String(topic) ) && ActualMode==2){  // PTTmodeCW, PTTmodeCW, PTTmodeSSB, PTTmodeFSK, PTTmodeFSK, PTTmodeDIGI
+    if(p[0]==48){
+      ptt_low(PTTbyMode[ActualMode],3);
+    }else{
+      ptt_high(PTTbyMode[ActualMode]);
+    }
+  }
+
   InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
 } // MqttRx END
 
@@ -3984,7 +4057,7 @@ void IncomingUDP(){
         //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         // CW send to SOMQ orchestra (proxy)
         // RX string -> TX w:#######:[msg];
-        if(GpsTime==1 && (ReadGpsData[42]=='1' || ReadGpsData[42]=='2')){   // if enable SOMQ orchestra and gps quality byte ok
+        if(GpsTime==1 && GpsPpsStatus==true){   //(ReadGpsData[42]=='1' || ReadGpsData[42]=='2')){   // if enable SOMQ orchestra and gps quality byte ok
           // InterruptON(0,0,0); // keyb, enc, gps
           UdpRtty.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);      // read the packet into packetBufffer
           for (i = UDP_TX_PACKET_MAX_SIZE; i > -1 ; i--) { // move RX [msg] data (space for header)
@@ -3998,6 +4071,7 @@ void IncomingUDP(){
           packetBuffer[9] = B00111010;               // :
 
           String HexTimeString = String((GpsTimeMillisDiff+millis()+TxQthIpLatency), HEX);  // Actually UTC time in millis + latency in HEX  <------- LATENCY
+          HexTimeString.reserve(8);
           for (i = HexTimeString.length(); i < 7; i++) {            // Leading zero
             HexTimeString = String("0") + HexTimeString;
           }
@@ -4326,6 +4400,7 @@ unsigned char hexToDecBy4bit(unsigned char hex)
 //-------------------------------------------------------------------------------------------------------
 
 long hexToLong(String hexString) {
+    hexString.reserve(20);
     long decValue = 0;
     int nextInt;
     for (int i = 0; i < hexString.length(); i++) {
@@ -4341,6 +4416,7 @@ long hexToLong(String hexString) {
 //-------------------------------------------------------------------------------------------------------
 
 unsigned int hexToDec(String hexString) {
+    hexString.reserve(20);
     unsigned int decValue = 0;
     int nextInt;
     for (int i = 0; i < hexString.length(); i++) {
@@ -4377,7 +4453,7 @@ void SendBroadcastUdpPTT(int status){         // Measured 2 ms
 //-------------------------------------------------------------------------------------------------------
 
 void Debugging(String StringForDebug){
-  StringForDebug.reserve(50);
+  StringForDebug.reserve(150);
   if(DebuggingOutput!=0){
     // Serial0 KEY
     if(DebuggingOutput==1){
@@ -4430,11 +4506,12 @@ void SendBroadcastUdp(){
 }
 //-------------------------------------------------------------------------------------------------------
 void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
+  path.reserve(20);
   InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
   if(EnableEthernet == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
     if (mqttClient.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
-      String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
-      path2.toCharArray( mqttPath, 20 );
+      path = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
+      path.toCharArray( mqttPath, 20 );
       if (value != 0){
         String(value).toCharArray( mqttTX, 50 );
       }else{
@@ -4444,8 +4521,8 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
     }
   }else{
     if (mqttClient.connect("arduinoClient")) {
-      String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
-      path2.toCharArray( mqttPath, 20 );
+      path = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
+      path.toCharArray( mqttPath, 20 );
       if (value != 0){
         String(value).toCharArray( mqttTX, 50 );
       }else{
@@ -4458,18 +4535,20 @@ void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
 }
 //-------------------------------------------------------------------------------------------------------
 void MqttPubString_old(String path, String character){
+  path.reserve(20);
+  character.reserve(50);
   InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
   if(EnableEthernet == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
     if (mqttClient.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
-      String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
-      path2.toCharArray( mqttPath, 20 );
+      path = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
+      path.toCharArray( mqttPath, 20 );
       character.toCharArray( mqttTX, 50 );
       mqttClient.publish(mqttPath, mqttTX);
     }
   }else{
     if (mqttClient.connect("arduinoClient")) {
-      String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
-      path2.toCharArray( mqttPath, 20 );
+      path = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
+      path.toCharArray( mqttPath, 20 );
       character.toCharArray( mqttTX, 50 );
       mqttClient.publish(mqttPath, mqttTX);
     }
@@ -4478,6 +4557,8 @@ void MqttPubString_old(String path, String character){
 }
 //-----------------------------------------------------------------------------------
 void MqttPubString(String TOPIC, String DATA, bool RETAIN){
+  TOPIC.reserve(50);
+  DATA.reserve(150);
   char charbuf[50];
    memcpy( charbuf, mac, 6);
    charbuf[6] = 0;
@@ -4485,9 +4566,9 @@ void MqttPubString(String TOPIC, String DATA, bool RETAIN){
   if(EnableEthernet==1 && MQTT_ENABLE==1 && EthLinkStatus==1 && mqttClient.connected()==true){
     InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     if (mqttClient.connect(charbuf)) {
-      String path = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/" + TOPIC;
-      path.toCharArray( mqttPath, 50 );
-      DATA.toCharArray( mqttTX, 50 );
+      TOPIC = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/" + TOPIC;
+      TOPIC.toCharArray( mqttPath, 50 );
+      DATA.toCharArray( mqttTX, 150 );
       mqttClient.publish(mqttPath, mqttTX, RETAIN);
     }
     InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
@@ -4499,10 +4580,12 @@ void DCinMeasure(){
   if (millis() - Timeout[7][0] > (Timeout[7][1])){
     DCinVoltage = volt(analogRead(DCIN), 11, VOLTAGE_MEASURE_ADJUST);
     if (DCinVoltage<8){
+      tone(TONE, 400, 1000);
       lcd.setCursor(3, 0);
       lcd.print(F("Power LOW!"));
       ActualMenu= 2;
     }else if (DCinVoltage>19){
+      tone(TONE, 800, 1000);
       lcd.setCursor(2, 0);
       lcd.print(F("Power HIGH!"));
       ActualMenu= 2;
@@ -4522,8 +4605,12 @@ void OpenInterfaceLCD(){    // LCD
       if(ptt_interlock_active == 1){
           lcd.write(byte(5));               // Interlock icon
       }else{
-        if(GpsTime==1 && (ReadGpsData[42]=='1' || ReadGpsData[42]=='2') ){      // gps quality byte
-          lcd.print(F("+"));
+        if(GpsTime==1 && GpsPpsStatus==true ){      // gps quality byte
+          if((ReadGpsData[42]=='1' || ReadGpsData[42]=='2') ){      // gps quality byte
+            lcd.print(F("+"));
+          }else{
+            lcd.print(F("-"));
+          }
         } else if (analogRead(SDPLUG)<128){
           lcd.write(byte(4));               // microSD icon
         } else {
@@ -4564,6 +4651,7 @@ void OpenInterfaceLCD(){    // LCD
 //-------------------------------------------------------------------------------------------------------
 void MenuToLCD(int nr){
   String Note = MenuTree[nr];
+  Note.reserve(11);
   Note.remove(11);                // fixed lenth to 11 char
     Note += " ";
   lcd.print(Note);
@@ -4846,7 +4934,7 @@ void MenuToLCD(int nr){
     case 23:{ // GpsTime
       lcd.setCursor(CulumnPosition-1, 1);
       if(GpsTime==1){
-        if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){      // gps quality byte
+        if(GpsPpsStatus==true){      // gps quality byte
           if(GpsUtc[0]<10){
             lcd.print(F("0"));
           }
@@ -4875,7 +4963,7 @@ void MenuToLCD(int nr){
     case 24:{ // GpsTime difference
       lcd.setCursor(CulumnPosition-1, 1);
       if(GpsTime==1){
-        if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){      // gps quality byte
+        if(GpsPpsStatus==true){      // gps quality byte
           lcd.print(String(GpsTimeMillisDiff, HEX));   // long to hex
           // lcd.print((GpsTimeMillisDiff+millis()+10000), HEX);   // utc time + 10s
           CulumnPosition=CulumnPosition+String(GpsTimeMillisDiff, HEX).length();
@@ -4892,7 +4980,7 @@ void MenuToLCD(int nr){
     case 25:{ // SOMQ B4TX Timer
       lcd.setCursor(CulumnPosition-1, 1);
       if(GpsTime==1){
-        if(ReadGpsData[42]=='1' || ReadGpsData[42]=='2'){      // gps quality byte
+        if(GpsPpsStatus==true){      // gps quality byte
           lcd.print(B4TxTimer);
           CulumnPosition=CulumnPosition+String(B4TxTimer).length();
         }else{
@@ -4979,6 +5067,7 @@ void MenuToLCD(int nr){
 //-------------------------------------------------------------------------------------------------------
 String PrintByte(byte ByteToPrint){
   String LCDstring = "";
+  LCDstring.reserve(8);
   for (int i=0; i<8; i++){
     if (ByteToPrint & (1<<i)) {
       LCDstring += i+1;
@@ -5141,14 +5230,14 @@ void OpenInterfaceMODE(){
         ptt_high(PTTbyMode[ActualMode]);
         if(FootSwChange != 1){          // if change
           FootSwChange = 1;
-            MqttPubString("footsw", "1", false);
+            // MqttPubString("footsw", "1", false);
         }
       }else{
         if(FootSwChange != 0){
           // ptt_low(PTTmodeSSB,9);
           ptt_low(PTTbyMode[ActualMode],9);
           FootSwChange = 0;
-            MqttPubString("footsw", "0", false);
+            // MqttPubString("footsw", "0", false);
         }
       }
       MenuEncoder();
@@ -5731,15 +5820,15 @@ void BandDecoder() {
               InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
                 incomingByte = Serial2.read();
                 icomSM(incomingByte);
-                rdIS="";
+                rdS="";
                 if(rdI[4]==0x03 && rdI[10]==0xFD){    // Freq - 03 command and state machine end
                     for (int i=9; i>=5; i-- ){
                         if (rdI[i] < 10) {            // leading zero
-                            rdIS = rdIS + 0;
+                            rdS = rdS + 0;
                         }
-                        rdIS = rdIS + String(rdI[i], HEX); // append BCD digit from HEX variable to string
+                        rdS = rdS + String(rdI[i], HEX); // append BCD digit from HEX variable to string
                     }
-                    freq = rdIS.toInt();
+                    freq = rdS.toInt();
                     FreqToBandRules(freq);
                     bandSET();                             // set outputs relay
                     txCIV(4, 0, CIV_ADRESS);               // ([command], [freq]) 4=read MODE
@@ -5817,13 +5906,13 @@ void BandDecoder() {
     // KENWOOD CAT IN
     if (BAND_DECODER_IN == 2){  // KENWOOD_PC
         while (Serial2.available()) {
-            rdKS="";
+            rdS="";
             Serial2.readBytesUntil(lf, rdK, 38);       // fill array from serial
                 if (rdK[0] == 73 && rdK[1] == 70){     // filter
                     for (int i=2; i<=12; i++){          // 3-13 position to freq
-                        rdKS = rdKS + String(rdK[i]);   // append variable to string
+                        rdS = rdS + String(rdK[i]);   // append variable to string
                     }
-                    freq = rdKS.toInt();
+                    freq = rdS.toInt();
                     FreqToBandRules(freq);
                     bandSET();                                              // set outputs relay
 
@@ -5864,13 +5953,13 @@ void BandDecoder() {
     // YAESU CAT IN
     if (BAND_DECODER_IN == 3){  // YAESU_CAT
         while (Serial2.available()) {
-            rdYS="";
+            rdS="";
             Serial2.readBytesUntil(lf, rdY, 38);         // fill array from serial
                 if (rdY[0] == 73 && rdY[1] == 70){      // filter
                     for (int i=5; i<=12; i++){          // 6-13 position to freq
-                        rdYS = rdYS + String(rdY[i]);   // append variable to string
+                        rdS = rdS + String(rdY[i]);   // append variable to string
                     }
-                    freq = rdYS.toInt();
+                    freq = rdS.toInt();
                     FreqToBandRules(freq);
                     bandSET();                                              // set outputs relay
 
@@ -5916,17 +6005,17 @@ void BandDecoder() {
         }
 
         while (Serial2.available()) {
-            rdYOS="";
+            rdS="";
             Serial2.readBytesUntil('240', rdYO, 5);                   // fill array from serial (240 = 0xF0)
             if (rdYO[0] != 0xF0 && rdYO[1] != 0xF0 && rdYO[2] != 0xF0 && rdYO[3] != 0xF0 && rdYO[4] != 0xF0 && rdYO[5] != 0xF0){     // filter
                 for (int i=0; i<4; i++ ){
                     if (rdYO[i] < 10) {                              // leading zero
-                        rdYOS = rdYOS + 0;
+                        rdS = rdS + 0;
                     }
-                    rdYOS = rdYOS + String(rdYO[i], HEX);            // append BCD digit from HEX variable to string
+                    rdS = rdS + String(rdYO[i], HEX);            // append BCD digit from HEX variable to string
                 }
-                rdYOS = rdYOS + 0;                                   // append Hz
-                freq = rdYOS.toInt();
+                rdS = rdS + 0;                                   // append Hz
+                freq = rdS.toInt();
                 FreqToBandRules(freq);
                 bandSET();                                                                // set outputs relay
 
@@ -5968,6 +6057,7 @@ void BandDecoder() {
     #if defined(KENWOOD_PC_OUT)
         if(freq != freqPrev2){                     // if change
             String freqPCtx = String(freq);        // to string
+            freqPCtx.reserve(11);
             while (freqPCtx.length() < 11) {       // leding zeros
                 freqPCtx = 0 + freqPCtx;
             }
@@ -5983,6 +6073,7 @@ void BandDecoder() {
     #if defined(YAESU_CAT_OUT)
         if(freq != freqPrev2){                     // if change
             String freqPCtx = String(freq);        // to string
+            freqPCtx.reserve(8);
             while (freqPCtx.length() < 8) {        // leding zeros
                 freqPCtx = 0 + freqPCtx;
             }
@@ -5997,6 +6088,7 @@ void BandDecoder() {
     #if defined(YAESU_CAT_OUT_OLD)
         if(freq != freqPrev2){                     // if change
             String freqPCtx = String(freq);        // to string
+            freqPCtx.reserve(8);
             while (freqPCtx.length() < 8) {        // leding zeros
                 freqPCtx = 0 + freqPCtx;
            }
@@ -6120,7 +6212,9 @@ int txCIV(int commandCIV, long dataCIVtx, int toAddress) {
     Serial2.write(commandCIV);                             // data
     if (dataCIVtx != 0){
         String freqCIVtx = String(dataCIVtx);             // to string
+        freqCIVtx.reserve(10);
         String freqCIVtxPart;
+        freqCIVtxPart.reserve(10);
         while (freqCIVtx.length() < 10) {                 // leding zeros
             freqCIVtx = 0 + freqCIVtx;
         }
@@ -6142,7 +6236,9 @@ int txCIVout(int commandCIV, long dataCIVtx, int toAddress) {
     Serial3.write(commandCIV);                             // data
     if (dataCIVtx != 0){
         String freqCIVtx = String(dataCIVtx);             // to string
+        freqCIVtx.reserve(10);
         String freqCIVtxPart;
+        freqCIVtxPart.reserve(10);
         while (freqCIVtx.length() < 10) {                 // leding zeros
             freqCIVtx = 0 + freqCIVtx;
         }
